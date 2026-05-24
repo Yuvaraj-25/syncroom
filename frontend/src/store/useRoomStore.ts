@@ -19,6 +19,7 @@ interface Message {
     userImage?: string;
     text: string;
     timestamp: string;
+    isAi?: boolean;
 }
 
 export interface Poll {

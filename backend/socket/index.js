@@ -167,8 +167,70 @@ export default function initSocket(io) {
         });
 
         // Chat
-        socket.on('chat-message', ({ roomId, message }) => {
+        socket.on('chat-message', async ({ roomId, message }) => {
             io.to(roomId).emit('chat-message', message);
+
+            // AI Assistant Integration
+            const text = message.text || '';
+            if (text.toLowerCase().startsWith('@ai ') || text.toLowerCase() === '@ai') {
+                const userQuery = text.replace(/^@ai/i, '').trim() || "Hello!";
+                
+                // Show AI is typing
+                io.to(roomId).emit('typing', { userName: 'SyncRoom AI 🤖' });
+                
+                try {
+                    const apiKey = process.env.OPENROUTER_API_KEY;
+                    if (!apiKey) {
+                        throw new Error('OpenRouter API key is missing.');
+                    }
+
+                    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${apiKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model: 'google/gemini-pro',
+                            messages: [
+                                { role: 'system', content: 'You are an AI assistant in a real-time collaborative room called SyncRoom. You help users with their questions. Keep answers concise, helpful, and friendly. You can use simple markdown if necessary.' },
+                                { role: 'user', content: userQuery }
+                            ]
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`API error: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    const aiText = data.choices?.[0]?.message?.content || "Sorry, I couldn't generate a response.";
+
+                    const aiMessage = {
+                        id: Math.random().toString(36).substring(2, 15),
+                        userId: 'ai-assistant',
+                        userName: 'SyncRoom AI 🤖',
+                        userImage: 'https://api.dicebear.com/7.x/bottts/svg?seed=syncroomai',
+                        text: aiText,
+                        timestamp: new Date().toISOString(),
+                        isAi: true
+                    };
+
+                    io.to(roomId).emit('chat-message', aiMessage);
+                } catch (error) {
+                    console.error('AI Error:', error);
+                    const errorMessage = {
+                        id: Math.random().toString(36).substring(2, 15),
+                        userId: 'ai-assistant',
+                        userName: 'SyncRoom AI 🤖',
+                        userImage: 'https://api.dicebear.com/7.x/bottts/svg?seed=syncroomai',
+                        text: "Sorry, I'm having trouble connecting right now. Please make sure my API key is configured correctly.",
+                        timestamp: new Date().toISOString(),
+                        isAi: true
+                    };
+                    io.to(roomId).emit('chat-message', errorMessage);
+                }
+            }
         });
 
         socket.on('typing', ({ roomId, userName }) => {

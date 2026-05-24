@@ -336,12 +336,15 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
                                             className="w-6 h-6 rounded-full shrink-0 shadow-sm"
                                         />
                                     )}
-                                    <div className={`rounded-2xl px-4 py-2 text-sm shadow-md backdrop-blur-md ${isMe
+                                    <div className={`rounded-2xl px-4 py-2 text-sm shadow-md backdrop-blur-md ${
+                                        isMe
                                         ? 'bg-indigo-600/90 text-white rounded-br-sm border border-indigo-500/50'
-                                        : 'bg-zinc-800/80 text-zinc-200 rounded-bl-sm border border-zinc-700/50'
+                                        : (m as any).isAi
+                                            ? 'bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-zinc-200 rounded-bl-sm border border-purple-500/30'
+                                            : 'bg-zinc-800/80 text-zinc-200 rounded-bl-sm border border-zinc-700/50'
                                         }`}>
-                                        {!isMe && <div className="text-xs text-indigo-400 font-semibold mb-1">{m.userName}</div>}
-                                        <div>{m.text}</div>
+                                        {!isMe && <div className={`text-xs font-semibold mb-1 ${(m as any).isAi ? 'text-purple-400' : 'text-indigo-400'}`}>{m.userName}</div>}
+                                        <div className={(m as any).isAi ? 'whitespace-pre-wrap' : ''}>{m.text}</div>
                                     </div>
                                 </div>
                                 <div className="text-[10px] text-zinc-500 mt-1 mx-8 font-mono">
