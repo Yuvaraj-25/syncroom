@@ -1,13 +1,16 @@
-FROM node:20-alpine
-
+# Build stage
+FROM maven:3.9.8-eclipse-temurin-21 AS build
 WORKDIR /app
+COPY pom.xml .
+# Pre-fetch dependencies
+RUN mvn dependency:go-offline -B
+COPY src ./src
+RUN mvn clean package -DskipTests
 
-COPY package.json package-lock.json ./
-RUN npm ci --only=production
+# Run stage
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /app/target/syncroom-backend-1.0.0.jar app.jar
 
-COPY . .
-
-# Railway injects PORT dynamically — EXPOSE is just documentation
-EXPOSE ${PORT:-4000}
-
-CMD ["npm", "start"]
+EXPOSE 4000
+ENTRYPOINT ["java", "-jar", "app.jar"]

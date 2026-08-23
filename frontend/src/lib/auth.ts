@@ -1,14 +1,37 @@
 import { NextAuthOptions, Session, User } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
 import { JWT } from "next-auth/jwt";
 import { AdapterUser } from "next-auth/adapters";
 
 export const authOptions: NextAuthOptions = {
     providers: [
-        GoogleProvider({
-            clientId: process.env.GOOGLE_CLIENT_ID || "",
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-        }),
+        ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+            ? [
+                GoogleProvider({
+                    clientId: process.env.GOOGLE_CLIENT_ID,
+                    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+                }),
+            ]
+            : []),
+        CredentialsProvider({
+            id: "credentials",
+            name: "Guest / Demo Account",
+            credentials: {
+                name: { label: "Name", type: "text", placeholder: "Alex" },
+                email: { label: "Email", type: "email", placeholder: "alex@syncroom.dev" }
+            },
+            async authorize(credentials) {
+                const name = credentials?.name?.trim() || "SyncRoom User";
+                const email = credentials?.email?.trim() || "user@syncroom.dev";
+                return {
+                    id: "user_" + Math.random().toString(36).substring(2, 9),
+                    name,
+                    email,
+                    image: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(email)}`
+                };
+            }
+        })
     ],
     pages: {
         signIn: '/', // Using landing page as sign-in

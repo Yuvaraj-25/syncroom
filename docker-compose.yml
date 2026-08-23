@@ -1,14 +1,35 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: syncroom-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=syncroom
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - syncroom-network
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    container_name: syncroom-backend
     ports:
       - "4000:4000"
-    env_file:
-      - ./backend/.env
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/syncroom
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=postgres
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://frontend:3000
+    depends_on:
+      - postgres
     restart: unless-stopped
     networks:
       - syncroom-network
@@ -17,6 +38,7 @@ services:
     build:
       context: ./python-service
       dockerfile: Dockerfile
+    container_name: syncroom-python-service
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -27,12 +49,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    container_name: syncroom-frontend
     ports:
       - "3000:3000"
     env_file:
       - ./frontend/.env.local
     environment:
-      - NEXT_PUBLIC_SOCKET_URL=http://backend:4000
+      - NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
     depends_on:
       - backend
       - python-service
@@ -43,3 +66,6 @@ services:
 networks:
   syncroom-network:
     driver: bridge
+
+volumes:
+  postgres_data:

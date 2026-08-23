@@ -1,0 +1,42 @@
+# Server Configuration
+server.port=4000
+
+# Supabase / PostgreSQL Database Configuration
+# For Local PostgreSQL:
+# spring.datasource.url=jdbc:postgresql://localhost:5432/syncroom
+# spring.datasource.username=postgres
+# spring.datasource.password=postgres
+#
+# For Hosted Supabase (Project Settings -> Database -> Connection string URI / Transaction pooler):
+# spring.datasource.url=jdbc:postgresql://db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require
+# spring.datasource.username=postgres
+# spring.datasource.password=your_supabase_db_password
+spring.datasource.url=${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/syncroom}
+spring.datasource.username=${SPRING_DATASOURCE_USERNAME:postgres}
+spring.datasource.password=${SPRING_DATASOURCE_PASSWORD:postgres}
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# JPA / Hibernate Configuration
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.properties.hibernate.format_sql=true
+spring.jpa.open-in-view=false
+
+# CORS Configuration
+cors.allowed-origins=http://localhost:3000,http://127.0.0.1:3000
+
+# JWT Security Configuration
+jwt.secret=syncroom_jwt_super_secure_secret_key_minimum_256_bits_length_1234567890
+jwt.expiration-ms=86400000
+
+# YouTube API Configuration
+youtube.api.key=${YOUTUBE_API_KEY:}
+
+# OpenRouter / AI Assistant Configuration
+openrouter.api.key=${OPENROUTER_API_KEY:}
+
+# Logging Configuration
+logging.level.root=INFO
+logging.level.com.project=DEBUG
+logging.level.org.springframework.web.socket=INFO

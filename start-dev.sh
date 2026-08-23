@@ -1,37 +1,42 @@
 #!/bin/bash
 
-echo "Starting SyncRoom Local Development..."
+# SyncRoom Local Development Startup Script
 
-# Start Backend
-echo "Starting Backend..."
+echo "Starting SyncRoom Development Services..."
+
+# 1. Start Spring Boot Backend
+echo "Starting Spring Boot Backend on port 4000..."
 cd backend
-npm run dev &
+mvn spring-boot:run &
 BACKEND_PID=$!
 cd ..
 
-# Start Frontend
-echo "Starting Frontend..."
+# 2. Start Frontend
+echo "Starting Next.js Frontend on port 3000..."
 cd frontend
 npm run dev &
 FRONTEND_PID=$!
 cd ..
 
-# Start Python Microservice
-echo "Starting Python Service..."
+# 3. Start Python Service
+echo "Starting Python Service on port 8000..."
 cd python-service
 if [ ! -d "venv" ]; then
-  python -m venv venv
-  source venv/bin/activate
-  pip install -r requirements.txt
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
 else
-  source venv/bin/activate
+    source venv/bin/activate
 fi
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 PYTHON_PID=$!
 cd ..
 
-echo "All services started! Press Ctrl+C to stop everything."
+echo "All services running!"
+echo "Backend:  http://localhost:4000"
+echo "Frontend: http://localhost:3000"
+echo "Python:   http://localhost:8000"
 
-# Wait for user input to trap Ctrl+C and kill background processes
-trap "kill $BACKEND_PID $FRONTEND_PID $PYTHON_PID" EXIT
+# Trap Ctrl+C to kill all background processes
+trap "kill $BACKEND_PID $FRONTEND_PID $PYTHON_PID 2>/dev/null; exit" SIGINT SIGTERM
 wait
