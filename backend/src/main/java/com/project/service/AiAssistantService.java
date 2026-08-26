@@ -45,16 +45,17 @@ public class AiAssistantService {
         String timestamp = Instant.now().toString();
 
         if (openRouterApiKey == null || openRouterApiKey.isBlank()) {
-            log.warn("OpenRouter API key is missing");
-            Map<String, Object> errorMsg = new HashMap<>();
-            errorMsg.put("id", randomId);
-            errorMsg.put("userId", "ai-assistant");
-            errorMsg.put("userName", "SyncRoom AI 🤖");
-            errorMsg.put("userImage", "https://api.dicebear.com/7.x/bottts/svg?seed=syncroomai");
-            errorMsg.put("text", "Sorry, I'm having trouble connecting right now. Please make sure my API key is configured correctly.");
-            errorMsg.put("timestamp", timestamp);
-            errorMsg.put("isAi", true);
-            return errorMsg;
+            log.info("OpenRouter API key not configured, using smart offline response for query: {}", userQuery);
+            String smartResponse = getSmartFallbackResponse(userQuery);
+            Map<String, Object> fallbackMsg = new HashMap<>();
+            fallbackMsg.put("id", randomId);
+            fallbackMsg.put("userId", "ai-assistant");
+            fallbackMsg.put("userName", "SyncRoom AI 🤖");
+            fallbackMsg.put("userImage", "https://api.dicebear.com/7.x/bottts/svg?seed=syncroomai");
+            fallbackMsg.put("text", smartResponse);
+            fallbackMsg.put("timestamp", timestamp);
+            fallbackMsg.put("isAi", true);
+            return fallbackMsg;
         }
 
         try {
@@ -99,10 +100,34 @@ public class AiAssistantService {
             errorMsg.put("userId", "ai-assistant");
             errorMsg.put("userName", "SyncRoom AI 🤖");
             errorMsg.put("userImage", "https://api.dicebear.com/7.x/bottts/svg?seed=syncroomai");
-            errorMsg.put("text", "Sorry, I'm having trouble connecting right now. Please make sure my API key is configured correctly.");
+            errorMsg.put("text", "Sorry, I'm having trouble connecting right now. Please check my API key configuration.");
             errorMsg.put("timestamp", timestamp);
             errorMsg.put("isAi", true);
             return errorMsg;
         }
+    }
+
+    private String getSmartFallbackResponse(String query) {
+        String lower = query.toLowerCase();
+        if (lower.contains("hello") || lower.contains("hi") || lower.contains("hey")) {
+            return "👋 Hey there! Welcome to **SyncRoom**! I'm your AI watch-party assistant. How can I help you and your room members today?";
+        }
+        if (lower.contains("recommend") || lower.contains("movie") || lower.contains("video") || lower.contains("watch")) {
+            return "🎬 **Top Watch-Party Suggestions:**\n" +
+                    "1. *Lofi Hip Hop Radio - Beats to Relax/Study to*\n" +
+                    "2. *Kurzgesagt – In a Nutshell science explorations*\n" +
+                    "3. *Veritasium or Mark Rober tech adventures*\n" +
+                    "4. *Free Blender Foundation Animated Open Movies (Big Buck Bunny, Sintel)*\n\n" +
+                    "You can paste any YouTube URL or search directly from the **Queue panel**!";
+        }
+        if (lower.contains("help") || lower.contains("how to") || lower.contains("feature")) {
+            return "💡 **SyncRoom Quick Tips:**\n" +
+                    "- **Video Sync:** Room owners control playback, pause, and seek for everyone.\n" +
+                    "- **Whiteboard:** Click the Whiteboard button to draw collaboratively in real-time.\n" +
+                    "- **Polls & Q&A:** Use the Polls sidebar to host interactive votes or take questions.\n" +
+                    "- **Voice & Video:** Toggle your mic and camera in the bottom control bar!";
+        }
+        return "🤖 You asked: *\"" + query + "\"*\n\n" +
+                "I'm currently running in standard assistant mode. (To enable deep live AI reasoning, set the `OPENROUTER_API_KEY` environment variable in your backend). Enjoy watching together in **SyncRoom**!";
     }
 }

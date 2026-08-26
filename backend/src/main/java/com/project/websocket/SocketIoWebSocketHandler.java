@@ -126,8 +126,8 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
             case "add-to-queue" -> handleAddToQueue(roomId, dataMap);
             case "remove-from-queue" -> handleRemoveFromQueue(socketId, roomId, dataMap);
             case "play-next" -> handlePlayNext(socketId, roomId);
-            case "draw-line" -> broadcastToOthersInRoom(roomId, socketId, "draw-line", dataMap);
-            case "clear-whiteboard" -> broadcastToOthersInRoom(roomId, socketId, "clear-whiteboard", Collections.emptyMap());
+            case "draw-line" -> handleDrawLine(socketId, roomId, dataMap);
+            case "clear-whiteboard" -> handleClearWhiteboard(socketId, roomId);
             case "request-whiteboard" -> handleRequestWhiteboard(socketId, roomId);
             case "sync-whiteboard-response" -> handleSyncWhiteboardResponse(dataMap);
             case "emoji-reaction" -> handleEmojiReaction(socketId, roomId, dataMap);
@@ -180,8 +180,38 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         List<Map<String, Object>> usersInRoom = roomStateManager.getUsersInRoom(roomId);
         emitToSocket(socketId, "room-users", usersInRoom);
 
+        // Send custom room name if set
+        String roomName = roomStateManager.getRoomName(roomId);
+        if (roomName != null && !roomName.isBlank()) {
+            emitToSocket(socketId, "room-name-changed", Map.of("name", roomName));
+        }
+
+        // Send current video playback synchronization state
+        RoomStateManager.VideoState videoState = roomStateManager.getVideoState(roomId);
+        if (videoState != null) {
+            if (videoState.getUrl() != null && !videoState.getUrl().isBlank()) {
+                emitToSocket(socketId, "video-url-change", Map.of("newUrl", videoState.getUrl()));
+            }
+            double calcTime = videoState.getCalculatedCurrentTime();
+            if (videoState.isPlaying()) {
+                emitToSocket(socketId, "video-play", Map.of("time", calcTime));
+            } else {
+                emitToSocket(socketId, "video-pause", Map.of("time", calcTime));
+            }
+        }
+
         // Send current queue
         emitToSocket(socketId, "queue-updated", Map.of("queue", roomStateManager.getQueue(roomId)));
+
+        // Send whiteboard stroke history
+        List<Map<String, Object>> strokes = roomStateManager.getWhiteboardStrokes(roomId);
+        if (strokes != null && !strokes.isEmpty()) {
+            synchronized (strokes) {
+                for (Map<String, Object> stroke : strokes) {
+                    emitToSocket(socketId, "draw-line", stroke);
+                }
+            }
+        }
 
         // Send current polls and Q&A
         emitToSocket(socketId, "polls-updated", Map.of("polls", roomStateManager.getPolls(roomId)));
@@ -190,24 +220,41 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
 
     private void handleVideoPlay(String socketId, String roomId, Map<String, Object> dataMap) {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
+            Double time = null;
+            if (dataMap.get("time") instanceof Number num) {
+                time = num.doubleValue();
+            }
+            roomStateManager.updateVideoPlay(roomId, time);
             broadcastToOthersInRoom(roomId, socketId, "video-play", dataMap);
         }
     }
 
     private void handleVideoPause(String socketId, String roomId, Map<String, Object> dataMap) {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
+            Double time = null;
+            if (dataMap.get("time") instanceof Number num) {
+                time = num.doubleValue();
+            }
+            roomStateManager.updateVideoPause(roomId, time);
             broadcastToOthersInRoom(roomId, socketId, "video-pause", dataMap);
         }
     }
 
     private void handleVideoSeek(String socketId, String roomId, Map<String, Object> dataMap) {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
+            double time = 0.0;
+            if (dataMap.get("time") instanceof Number num) {
+                time = num.doubleValue();
+            }
+            roomStateManager.updateVideoSeek(roomId, time);
             broadcastToOthersInRoom(roomId, socketId, "video-seek", dataMap);
         }
     }
 
     private void handleVideoUrlChange(String socketId, String roomId, Map<String, Object> dataMap) {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
+            String newUrl = String.valueOf(dataMap.get("newUrl"));
+            roomStateManager.updateVideoUrl(roomId, newUrl);
             emitToRoom(roomId, "video-url-change", dataMap);
         }
     }
@@ -237,13 +284,33 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
                         ? String.valueOf(((Map<String, Object>) nextItem).get("url"))
                         : String.valueOf(nextItem);
 
+                roomStateManager.updateVideoUrl(roomId, newUrl);
                 emitToRoom(roomId, "video-url-change", Map.of("newUrl", newUrl));
                 emitToRoom(roomId, "queue-updated", Map.of("queue", roomStateManager.getQueue(roomId)));
             }
         }
     }
 
+    private void handleDrawLine(String socketId, String roomId, Map<String, Object> dataMap) {
+        roomStateManager.addWhiteboardStroke(roomId, dataMap);
+        broadcastToOthersInRoom(roomId, socketId, "draw-line", dataMap);
+    }
+
+    private void handleClearWhiteboard(String socketId, String roomId) {
+        roomStateManager.clearWhiteboardStrokes(roomId);
+        broadcastToOthersInRoom(roomId, socketId, "clear-whiteboard", Collections.emptyMap());
+    }
+
     private void handleRequestWhiteboard(String socketId, String roomId) {
+        List<Map<String, Object>> strokes = roomStateManager.getWhiteboardStrokes(roomId);
+        if (strokes != null && !strokes.isEmpty()) {
+            synchronized (strokes) {
+                for (Map<String, Object> stroke : strokes) {
+                    emitToSocket(socketId, "draw-line", stroke);
+                }
+            }
+        }
+
         String primaryOwnerSocketId = roomStateManager.getPrimaryOwnerSocketId(roomId);
         if (primaryOwnerSocketId != null) {
             emitToSocket(primaryOwnerSocketId, "sync-whiteboard-request", Map.of("requesterId", socketId));
@@ -265,6 +332,8 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
 
     private void handleSetRoomName(String socketId, String roomId, Map<String, Object> dataMap) {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
+            String name = String.valueOf(dataMap.get("name"));
+            roomStateManager.setRoomName(roomId, name);
             emitToRoom(roomId, "room-name-changed", dataMap);
         }
     }
@@ -365,7 +434,12 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
             String targetSocketId = String.valueOf(dataMap.get("targetSocketId"));
             roomStateManager.grantOwner(roomId, targetSocketId);
-            emitToRoom(roomId, "owner-status-update", Map.of("socketId", targetSocketId, "isOwner", true));
+            boolean isPrimary = roomStateManager.isUserPrimaryOwner(roomId, targetSocketId);
+            emitToRoom(roomId, "owner-status-update", Map.of(
+                    "socketId", targetSocketId,
+                    "isOwner", true,
+                    "isPrimaryOwner", isPrimary
+            ));
         }
     }
 
@@ -383,7 +457,12 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         if (roomStateManager.isUserPrimaryOwner(roomId, socketId)) {
             String targetSocketId = String.valueOf(dataMap.get("targetSocketId"));
             roomStateManager.grantOwner(roomId, targetSocketId);
-            emitToRoom(roomId, "owner-status-update", Map.of("socketId", targetSocketId, "isOwner", true));
+            boolean isPrimary = roomStateManager.isUserPrimaryOwner(roomId, targetSocketId);
+            emitToRoom(roomId, "owner-status-update", Map.of(
+                    "socketId", targetSocketId,
+                    "isOwner", true,
+                    "isPrimaryOwner", isPrimary
+            ));
         }
     }
 

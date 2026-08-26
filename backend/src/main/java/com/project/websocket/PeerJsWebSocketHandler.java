@@ -58,7 +58,8 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
             String type = root.path("type").asText("");
 
             if ("HEARTBEAT".equalsIgnoreCase(type) || "PING".equalsIgnoreCase(type)) {
-                // Heartbeat response
+                // Heartbeat / Ping response to prevent client timeouts
+                session.sendMessage(new TextMessage("{\"type\":\"PONG\"}"));
                 return;
             }
 

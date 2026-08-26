@@ -14,7 +14,7 @@
     <artifactId>syncroom-backend</artifactId>
     <version>1.0.0</version>
     <name>syncroom-backend</name>
-    <description>SyncRoom Spring Boot 3 Backend</description>
+    <description>SyncRoom Spring Boot 4 Backend</description>
 
     <properties>
         <java.version>21</java.version>
