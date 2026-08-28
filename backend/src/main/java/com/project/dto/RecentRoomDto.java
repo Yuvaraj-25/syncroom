@@ -1,15 +1,15 @@
 package com.project.dto;
 
-import java.util.Date;
+import java.time.Instant;
 
 public class RecentRoomDto {
     private String roomId;
-    private Date joinedAt;
+    private Instant joinedAt;
 
     public RecentRoomDto() {
     }
 
-    public RecentRoomDto(String roomId, Date joinedAt) {
+    public RecentRoomDto(String roomId, Instant joinedAt) {
         this.roomId = roomId;
         this.joinedAt = joinedAt;
     }
@@ -22,11 +22,11 @@ public class RecentRoomDto {
         this.roomId = roomId;
     }
 
-    public Date getJoinedAt() {
+    public Instant getJoinedAt() {
         return joinedAt;
     }
 
-    public void setJoinedAt(Date joinedAt) {
+    public void setJoinedAt(Instant joinedAt) {
         this.joinedAt = joinedAt;
     }
 }

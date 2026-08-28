@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -53,15 +54,15 @@ public class UserServiceImpl implements UserService {
                         ? request.getImage()
                         : getDefaultDiceBearAvatar(email));
             }
-            user.setUpdatedAt(new Date());
+            user.setUpdatedAt(Instant.now());
             user = userRepository.save(user);
         } else {
             String image = request.getImage() != null && !request.getImage().isBlank()
                     ? request.getImage()
                     : getDefaultDiceBearAvatar(email);
             user = new User(request.getName(), email, image);
-            user.setCreatedAt(new Date());
-            user.setUpdatedAt(new Date());
+            user.setCreatedAt(Instant.now());
+            user.setUpdatedAt(Instant.now());
             user = userRepository.save(user);
         }
 
@@ -95,7 +96,7 @@ public class UserServiceImpl implements UserService {
         if (request.getImage() != null) {
             user.setImage(request.getImage());
         }
-        user.setUpdatedAt(new Date());
+        user.setUpdatedAt(Instant.now());
         userRepository.save(user);
 
         return new ProfileUpdateResponse(
@@ -120,9 +121,9 @@ public class UserServiceImpl implements UserService {
 
         return rooms.stream()
                 .sorted((a, b) -> {
-                    Date dateA = a.getJoinedAt() != null ? a.getJoinedAt() : new Date(0);
-                    Date dateB = b.getJoinedAt() != null ? b.getJoinedAt() : new Date(0);
-                    return dateB.compareTo(dateA);
+                    Instant instantA = a.getJoinedAt() != null ? a.getJoinedAt() : Instant.EPOCH;
+                    Instant instantB = b.getJoinedAt() != null ? b.getJoinedAt() : Instant.EPOCH;
+                    return instantB.compareTo(instantA);
                 })
                 .map(r -> new RecentRoomDto(r.getRoomId(), r.getJoinedAt()))
                 .collect(Collectors.toList());
@@ -146,7 +147,7 @@ public class UserServiceImpl implements UserService {
         recentRooms.removeIf(r -> roomId.equalsIgnoreCase(r.getRoomId()));
 
         // Add room to the beginning of the array
-        recentRooms.add(0, new RecentRoom(roomId, new Date()));
+        recentRooms.add(0, new RecentRoom(roomId, Instant.now()));
 
         // Keep only 10 most recent rooms
         if (recentRooms.size() > 10) {
@@ -154,7 +155,7 @@ public class UserServiceImpl implements UserService {
             user.setRecentRooms(recentRooms);
         }
 
-        user.setUpdatedAt(new Date());
+        user.setUpdatedAt(Instant.now());
         userRepository.save(user);
 
         return recentRooms.stream()

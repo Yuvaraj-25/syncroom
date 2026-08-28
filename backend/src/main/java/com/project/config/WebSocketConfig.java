@@ -3,13 +3,14 @@ package com.project.config;
 import com.project.websocket.PeerJsWebSocketHandler;
 import com.project.websocket.SocketIoWebSocketHandler;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.server.ServerHttpRequest;
+import org.springframework.http.server.ServerHttpResponse;
+import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
 
 @Configuration
@@ -43,11 +44,11 @@ public class WebSocketConfig implements WebSocketConfigurer {
     private HandshakeInterceptor proxyHandshakeInterceptor() {
         return new HandshakeInterceptor() {
             @Override
-            public boolean beforeHandshake(HttpServletRequest request, HttpServletResponse response,
-                                           org.springframework.web.socket.WebSocketHandler wsHandler,
+            public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
+                                           WebSocketHandler wsHandler,
                                            Map<String, Object> attributes) {
                 // Handle X-Forwarded-Proto header from Render proxy
-                String forwardedProto = request.getHeader("X-Forwarded-Proto");
+                String forwardedProto = request.getHeaders().getFirst("X-Forwarded-Proto");
                 if ("https".equals(forwardedProto)) {
                     attributes.put("org.springframework.web.socket.server.support.RemoteIpValve", "https");
                 }
@@ -55,8 +56,8 @@ public class WebSocketConfig implements WebSocketConfigurer {
             }
 
             @Override
-            public void afterHandshake(HttpServletRequest request, HttpServletResponse response,
-                                       org.springframework.web.socket.WebSocketHandler wsHandler,
+            public void afterHandshake(ServerHttpRequest request, ServerHttpResponse response,
+                                       WebSocketHandler wsHandler,
                                        Exception ex) {
                 // No-op
             }

@@ -9,7 +9,7 @@ import com.project.repository.RoomRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
+import java.time.Instant;
 
 @Service
 public class RoomServiceImpl implements RoomService {
@@ -54,8 +54,8 @@ public class RoomServiceImpl implements RoomService {
         }
 
         Room room = new Room(roomId, request.getOwnerId().trim(), request.isPrivate(), password);
-        room.setCreatedAt(new Date());
-        room.setUpdatedAt(new Date());
+        room.setCreatedAt(Instant.now());
+        room.setUpdatedAt(Instant.now());
 
         Room savedRoom = roomRepository.save(room);
         return toResponse(savedRoom);
