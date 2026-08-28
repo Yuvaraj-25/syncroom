@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.http.ResponseEntity;
 
-import java.util.Date;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -28,7 +28,7 @@ public class RoomControllerTest {
 
     @Test
     public void testGetRoom() {
-        RoomResponse roomResponse = new RoomResponse("id1", "ROOM1", "owner1", false, new Date(), new Date());
+        RoomResponse roomResponse = new RoomResponse("id1", "ROOM1", "owner1", false, Instant.now(), Instant.now());
         when(roomService.getRoom("ROOM1")).thenReturn(roomResponse);
 
         ResponseEntity<RoomResponse> response = roomController.getRoom("ROOM1");
@@ -39,7 +39,7 @@ public class RoomControllerTest {
 
     @Test
     public void testCreateRoom() {
-        RoomResponse roomResponse = new RoomResponse("id1", "ROOM1", "owner1", false, new Date(), new Date());
+        RoomResponse roomResponse = new RoomResponse("id1", "ROOM1", "owner1", false, Instant.now(), Instant.now());
         when(roomService.createRoom(any(RoomCreateRequest.class))).thenReturn(roomResponse);
 
         RoomCreateRequest request = new RoomCreateRequest("ROOM1", "owner1", false, null);

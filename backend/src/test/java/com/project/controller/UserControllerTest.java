@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.http.ResponseEntity;
 
-import java.util.Date;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -67,7 +67,7 @@ public class UserControllerTest {
 
     @Test
     public void testGetRecentRooms() {
-        List<RecentRoomDto> rooms = List.of(new RecentRoomDto("ROOM1", new Date()));
+        List<RecentRoomDto> rooms = List.of(new RecentRoomDto("ROOM1", Instant.now()));
         when(userService.getRecentRooms("test@example.com")).thenReturn(rooms);
 
         ResponseEntity<List<RecentRoomDto>> response = userController.getRecentRooms("test@example.com");
@@ -78,7 +78,7 @@ public class UserControllerTest {
 
     @Test
     public void testAddRecentRoom() {
-        List<RecentRoomDto> rooms = List.of(new RecentRoomDto("ROOM1", new Date()));
+        List<RecentRoomDto> rooms = List.of(new RecentRoomDto("ROOM1", Instant.now()));
         when(userService.addRecentRoom(any(RecentRoomRequest.class))).thenReturn(rooms);
 
         RecentRoomRequest request = new RecentRoomRequest("test@example.com", "ROOM1");

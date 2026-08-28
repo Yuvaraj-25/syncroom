@@ -10,8 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 
@@ -96,7 +96,7 @@ public class UserServiceTest {
         User user = new User("Test", "test@example.com", "img");
         List<RecentRoom> rooms = new ArrayList<>();
         for (int i = 1; i <= 10; i++) {
-            rooms.add(new RecentRoom("ROOM" + i, new Date(System.currentTimeMillis() - i * 1000)));
+            rooms.add(new RecentRoom("ROOM" + i, Instant.now().minusSeconds(i)));
         }
         user.setRecentRooms(rooms);
 
