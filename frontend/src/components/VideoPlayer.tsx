@@ -185,12 +185,12 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
     };
 
     const handlePlay = () => {
-            if (!isOwner) return;
-            if (isRemoteActionRef.current) return;
-            isPlayingRef.current = true;
-            const time = isVideoType === "youtube" ? ytPlayerRef.current?.getCurrentTime() : nativeVideoRef.current?.currentTime;
-            socket.volatile.emit("video-play", { roomId, time });
-        };
+        if (!isOwner) return;
+        if (isRemoteActionRef.current) return;
+        isPlayingRef.current = true;
+        const time = isVideoType === "youtube" ? ytPlayerRef.current?.getCurrentTime() : nativeVideoRef.current?.currentTime;
+        socket.volatile.emit("video-play", { roomId, time });
+    };
 
     const handlePause = () => {
         if (!isOwner) return;
@@ -203,7 +203,7 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
             if (isVideoType === "youtube" && ytPlayerRef.current) {
                 ytPlayerRef.current.playVideo();
             } else if (isVideoType === "local" && nativeVideoRef.current) {
-                nativeVideoRef.current.play().catch(() => {});
+                nativeVideoRef.current.play().catch(() => { });
             }
             return;
         }
@@ -340,11 +340,11 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
             } else if (isVideoType === "local" && nativeVideoRef.current) {
                 currentTime = nativeVideoRef.current.currentTime || 0;
             }
-            
+
             // Calculate expected owner time based on elapsed wall-clock time
             const elapsedSinceUpdate = isPlayingRef.current ? (Date.now() - lastOwnerUpdateRef.current) / 1000 : 0;
             const expectedOwnerTime = (ownerTimeRef.current || 0) + elapsedSinceUpdate;
-            
+
             const diff = Math.abs(currentTime - expectedOwnerTime);
             setSyncStatus(diff < 2 ? "synced" : "behind");
         }, 3000);
@@ -358,7 +358,7 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
         height: '100%',
         width: '100%',
         playerVars: {
-            autoplay: 0, 
+            autoplay: 0,
             controls: stableIsOwner ? 1 : 0, // Hide YouTube controls for non-owners
             disablekb: stableIsOwner ? 0 : 1, // Disable keyboard for non-owners
             fs: 0, // Disable native fullscreen so we use our custom wrapper fullscreen
@@ -440,11 +440,10 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
             <div ref={wrapperRef} id="syncroom-video-wrapper" className={`flex-1 w-full bg-black relative flex items-center justify-center tour-video-player ${!isOwner ? 'pointer-events-none' : ''}`}>
                 {/* Sync Status Badge */}
                 {!isOwner && syncStatus !== "unknown" && (
-                    <div className={`absolute top-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium backdrop-blur-md pointer-events-auto ${
-                        syncStatus === "synced"
+                    <div className={`absolute top-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium backdrop-blur-md pointer-events-auto ${syncStatus === "synced"
                             ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
                             : "bg-amber-500/10 border border-amber-500/30 text-amber-400"
-                    }`}>
+                        }`}>
                         {syncStatus === "synced" ? <><Check size={10} /> In Sync</> : <><AlertTriangle size={10} /> Behind</>}
                     </div>
                 )}
@@ -453,11 +452,10 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
                 {isVideoType === "local" && nativeVideoRef.current && (
                     <button
                         onClick={togglePiP}
-                        className={`absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium backdrop-blur-md pointer-events-auto cursor-pointer transition-colors ${
-                            isPiP
+                        className={`absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium backdrop-blur-md pointer-events-auto cursor-pointer transition-colors ${isPiP
                                 ? "bg-indigo-500/20 border border-indigo-500/40 text-indigo-300"
                                 : "bg-zinc-800/60 border border-zinc-700/50 text-zinc-300 hover:bg-zinc-700/60"
-                        }`}
+                            }`}
                     >
                         <PictureInPicture2 size={12} />
                         {isPiP ? "Exit PiP" : "PiP"}
@@ -475,17 +473,17 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
                 {/* Fullscreen Emoji Reactions */}
                 {isFullscreen && (
                     <div className="absolute bottom-4 inset-x-0 flex justify-center z-20 pointer-events-none">
-                        <EmojiReactions 
-                            socket={socket} 
-                            roomId={roomId} 
-                            containerClassName="pointer-events-auto bg-zinc-900/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-zinc-700/50 shadow-lg" 
+                        <EmojiReactions
+                            socket={socket}
+                            roomId={roomId}
+                            containerClassName="pointer-events-auto bg-zinc-900/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-zinc-700/50 shadow-lg"
                         />
                     </div>
                 )}
 
                 {/* Floating Chat Overlay (Fullscreen Only) */}
                 {isFullscreen && isChatVisible && (
-                    <div 
+                    <div
                         className="absolute right-4 top-4 bottom-16 w-80 z-50 flex flex-col transition-opacity duration-300 pointer-events-auto"
                         style={{ opacity: chatOpacity }}
                     >
@@ -493,15 +491,15 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
                         <div className="bg-zinc-900/90 backdrop-blur-md border border-zinc-700 rounded-t-xl px-3 py-2 flex items-center justify-between shrink-0 shadow-lg">
                             <div className="flex items-center gap-2">
                                 <span className="text-xs text-zinc-300 font-medium">Chat Opacity</span>
-                                <input 
-                                    type="range" 
+                                <input
+                                    type="range"
                                     min="0.2" max="1" step="0.1"
                                     value={chatOpacity}
                                     onChange={(e) => setChatOpacity(parseFloat(e.target.value))}
                                     className="w-20 accent-indigo-500"
                                 />
                             </div>
-                            <button 
+                            <button
                                 onClick={() => setIsChatVisible(false)}
                                 className="text-zinc-400 hover:text-white hover:bg-zinc-800 p-1 rounded transition-colors"
                                 title="Close chat (Press 'c' to reopen)"
@@ -518,11 +516,11 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
 
                 {/* Whiteboard Overlay */}
                 {isWhiteboardActive && (
-                    <Whiteboard 
-                        socket={socket} 
-                        roomId={roomId} 
-                        isOwner={stableIsOwner} 
-                        onClose={() => setIsWhiteboardActive(false)} 
+                    <Whiteboard
+                        socket={socket}
+                        roomId={roomId}
+                        isOwner={stableIsOwner}
+                        onClose={() => setIsWhiteboardActive(false)}
                     />
                 )}
 
@@ -538,20 +536,18 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
                         iframeClassName="w-full h-full"
                     />
                 ) : (
-                    <div 
-                        className={`transition-all duration-500 ease-out relative flex items-center justify-center pointer-events-auto overflow-hidden ${
-                            isVertical 
-                                ? "h-[90%] aspect-[9/16] rounded-2xl border-2 border-zinc-800/80 shadow-[0_0_50px_rgba(99,102,241,0.2)] bg-zinc-950" 
+                    <div
+                        className={`transition-all duration-500 ease-out relative flex items-center justify-center pointer-events-auto overflow-hidden ${isVertical
+                                ? "h-[90%] aspect-[9/16] rounded-2xl border-2 border-zinc-800/80 shadow-[0_0_50px_rgba(99,102,241,0.2)] bg-zinc-950"
                                 : "w-full h-full"
-                        }`}
+                            }`}
                     >
                         <video
                             ref={nativeVideoRef}
                             src={localVideoUrl}
                             controls={isOwner}
-                            className={`w-full h-full pointer-events-auto relative z-10 ${
-                                isVertical ? "object-contain rounded-xl" : "object-contain"
-                            }`}
+                            className={`w-full h-full pointer-events-auto relative z-10 ${isVertical ? "object-contain rounded-xl" : "object-contain"
+                                }`}
                             onPlay={handlePlay}
                             onPause={handlePause}
                             onSeeked={(e) => handleSeek((e.target as HTMLVideoElement).currentTime)}
@@ -564,3 +560,5 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
         </div>
     );
 }
+
+

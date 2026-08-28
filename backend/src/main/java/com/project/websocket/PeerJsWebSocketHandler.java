@@ -2,6 +2,7 @@ package com.project.websocket;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -36,6 +37,17 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
         String peerId = extractQueryParam(uri, "id");
 
         if (peerId != null && !peerId.isBlank()) {
+            // Check if peerId already exists (reconnection)
+            WebSocketSession existingSession = peers.get(peerId);
+            if (existingSession != null && existingSession.isOpen()) {
+                log.warn("PeerJS duplicate connection for peerId={}, closing old session", peerId);
+                try {
+                    existingSession.close(CloseStatus.NORMAL);
+                } catch (Exception e) {
+                    log.debug("Error closing old session for peerId={}", peerId, e);
+                }
+            }
+
             peers.put(peerId, session);
             sessionToPeerId.put(session.getId(), peerId);
             log.info("PeerJS client connected: peerId={}, sessionId={}", peerId, session.getId());
@@ -45,6 +57,7 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
             session.sendMessage(new TextMessage(openMsg));
         } else {
             log.warn("PeerJS connection attempt without 'id' parameter: uri={}", uri);
+            session.close(CloseStatus.BAD_DATA);
         }
     }
 
@@ -57,25 +70,53 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
             JsonNode root = objectMapper.readTree(payload);
             String type = root.path("type").asText("");
 
-            if ("HEARTBEAT".equalsIgnoreCase(type) || "PING".equalsIgnoreCase(type)) {
-                // Heartbeat / Ping response to prevent client timeouts
-                session.sendMessage(new TextMessage("{\"type\":\"PONG\"}"));
-                return;
-            }
-
-            String dst = root.path("dst").asText("");
-            if (!dst.isBlank()) {
-                WebSocketSession targetSession = peers.get(dst);
-                if (targetSession != null && targetSession.isOpen()) {
-                    synchronized (targetSession) {
-                        targetSession.sendMessage(new TextMessage(payload));
+            // Handle PeerJS protocol message types
+            switch (type.toUpperCase()) {
+                case "HEARTBEAT", "PING" -> {
+                    // Heartbeat / Ping response to prevent client timeouts
+                    session.sendMessage(new TextMessage("{\"type\":\"PONG\"}"));
+                    return;
+                }
+                case "OFFER", "ANSWER", "CANDIDATE", "LEAVE" -> {
+                    // These are signaling messages that should be forwarded to the target peer
+                    String dst = root.path("dst").asText("");
+                    if (!dst.isBlank()) {
+                        forwardToPeer(dst, payload);
+                    } else {
+                        log.warn("PeerJS {} message missing 'dst' field: {}", type, payload);
                     }
-                } else {
-                    log.debug("PeerJS target not found or closed: dst={}", dst);
+                    return;
+                }
+                default -> {
+                    // Unknown message type, try to forward if it has dst
+                    String dst = root.path("dst").asText("");
+                    if (!dst.isBlank()) {
+                        forwardToPeer(dst, payload);
+                    } else {
+                        log.debug("PeerJS unknown message type '{}' without dst: {}", type, payload);
+                    }
                 }
             }
         } catch (Exception ex) {
             log.error("Error handling PeerJS message: payload={}", payload, ex);
+        }
+    }
+
+    private void forwardToPeer(String dst, String payload) {
+        WebSocketSession targetSession = peers.get(dst);
+        if (targetSession != null && targetSession.isOpen()) {
+            synchronized (targetSession) {
+                try {
+                    targetSession.sendMessage(new TextMessage(payload));
+                    log.debug("PeerJS forwarded message to dst={}", dst);
+                } catch (Exception e) {
+                    log.error("Failed to forward message to dst={}", dst, e);
+                }
+            }
+        } else {
+            log.debug("PeerJS target not found or closed: dst={}", dst);
+            // Optionally notify sender that target is unavailable
+            // Could send back an ERROR message to the sender
         }
     }
 
@@ -85,6 +126,9 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
         if (peerId != null) {
             peers.remove(peerId);
             log.info("PeerJS client disconnected: peerId={}, status={}", peerId, status);
+
+            // Notify other peers that this peer has left (optional)
+            // Could broadcast a LEAVE message to all connected peers
         }
     }
 

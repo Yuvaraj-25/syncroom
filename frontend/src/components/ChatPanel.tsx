@@ -6,7 +6,7 @@ import { useRoomStore } from "@/store/useRoomStore";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Send, Smile, X } from "lucide-react";
+import { Send, Smile, X, Paperclip, Download, FileText, Image, Video, Music, File as FileIcon } from "lucide-react";
 
 // ── Comprehensive emoji list organised by category ──────────────────
 const EMOJI_CATEGORIES: { name: string; icon: string; emojis: string[] }[] = [
@@ -180,14 +180,74 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [activeEmojiCategory, setActiveEmojiCategory] = useState(0);
     const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+    const [uploadingFile, setUploadingFile] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
     
     const scrollRef = useRef<HTMLDivElement>(null);
     const emojiPickerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const typingTimeoutsRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
     const lastTypingEmitRef = useRef(0);
     const [chatSoundEnabled, setChatSoundEnabled] = useState(true);
     const prevMessageCountRef = useRef(messages.length);
+
+    // Request file list on mount
+    useEffect(() => {
+        socket.emit("request-files", { roomId });
+        return () => {
+            socket.off("file-shared");
+            socket.off("files-list");
+        };
+    }, [socket, roomId]);
+
+    interface SharedFileInfo {
+        id?: string;
+        senderId: string;
+        uploaderName: string;
+        uploaderImage?: string;
+        originalFilename: string;
+        fileSize: number;
+        downloadUrl: string;
+        contentType: string;
+        timestamp?: string;
+    }
+
+    // Handle file-shared events
+    useEffect(() => {
+        const handleFileShared = (fileInfo: SharedFileInfo) => {
+            const newMessage = {
+                id: fileInfo.id || Math.random().toString(36).substring(2, 9),
+                userId: fileInfo.senderId,
+                userName: fileInfo.uploaderName || "Unknown",
+                userImage: fileInfo.uploaderImage || "",
+                text: fileInfo.originalFilename || "File",
+                timestamp: fileInfo.timestamp || new Date().toISOString(),
+                type: "file" as const,
+                fileName: fileInfo.originalFilename,
+                fileSize: fileInfo.fileSize,
+                fileUrl: fileInfo.downloadUrl,
+                fileType: fileInfo.contentType,
+            };
+            // Add to store (avoid duplicates)
+            const exists = useRoomStore.getState().messages.some(m => m.id === newMessage.id);
+            if (!exists) {
+                useRoomStore.getState().addMessage(newMessage);
+            }
+        };
+
+        const handleFilesList = ({ files }: { files: SharedFileInfo[] }) => {
+            // Could pre-populate file history if needed
+            console.log("Received files list:", files.length);
+        };
+
+        socket.on("file-shared", handleFileShared);
+        socket.on("files-list", handleFilesList);
+        return () => {
+            socket.off("file-shared", handleFileShared);
+            socket.off("files-list", handleFilesList);
+        };
+    }, [socket, roomId]);
 
     // Play a subtle notification sound
     const playNotificationSound = useCallback(() => {
@@ -295,9 +355,126 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
         }
     };
 
+    const handleFileUpload = async (file: File) => {
+        if (!session?.user) return;
+        
+        setUploadingFile(true);
+        setUploadProgress(0);
+        
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("roomId", roomId);
+            const userId = (session.user as { id?: string }).id || socket.id || "anonymous";
+            formData.append("uploaderId", userId);
+            formData.append("uploaderName", session.user?.name || "Guest");
+            
+            const apiUrl = process.env.NEXT_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || "http://localhost:4000";
+            
+            // Simulate progress
+            const progressInterval = setInterval(() => {
+                setUploadProgress(prev => Math.min(prev + 10, 90));
+            }, 100);
+            
+            const response = await fetch(`${apiUrl}/api/files/upload`, {
+                method: "POST",
+                body: formData,
+            });
+            
+            clearInterval(progressInterval);
+            setUploadProgress(100);
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                // Emit file-share event to notify others in room
+                socket.emit("file-share", {
+                    roomId,
+                    ...result.file,
+                    senderId: socket.id,
+                    uploaderName: session.user.name,
+                    uploaderImage: session.user.image || "",
+                    timestamp: new Date().toISOString(),
+                });
+            } else {
+                alert("Upload failed: " + (result.error || "Unknown error"));
+            }
+        } catch (error) {
+            console.error("File upload error:", error);
+            alert("Failed to upload file");
+        } finally {
+            setUploadingFile(false);
+            setTimeout(() => setUploadProgress(0), 500);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = "";
+            }
+        }
+    };
+
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            handleFileUpload(file);
+        }
+    };
+
     const insertEmoji = (emoji: string) => {
         setText(prev => prev + emoji);
         inputRef.current?.focus();
+    };
+
+    const formatFileSize = (bytes: number): string => {
+        if (bytes === 0) return "0 B";
+        const k = 1024;
+        const sizes = ["B", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+    };
+
+    const getFileIcon = (fileType?: string) => {
+        if (!fileType) return <FileIcon size={20} />;
+        // eslint-disable-next-line jsx-a11y/alt-text
+        if (fileType.startsWith("image/")) return <Image size={20} />;
+        // eslint-disable-next-line jsx-a11y/alt-text
+        if (fileType.startsWith("video/")) return <Video size={20} />;
+        // eslint-disable-next-line jsx-a11y/alt-text
+        if (fileType.startsWith("audio/")) return <Music size={20} />;
+        // eslint-disable-next-line jsx-a11y/alt-text
+        if (fileType === "application/pdf") return <FileText size={20} />;
+        return <FileIcon size={20} />;
+    };
+
+    type MessageWithFile = {
+        type?: "text" | "file";
+        fileName?: string;
+        fileSize?: number;
+        fileUrl?: string;
+        fileType?: string;
+        text: string;
+        isAi?: boolean;
+    };
+
+    const renderMessageContent = (m: MessageWithFile) => {
+        if (m.type === "file" && m.fileUrl) {
+            return (
+                <a
+                    href={m.fileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 p-2 rounded-lg bg-zinc-800/50 border border-zinc-700/50 hover:bg-zinc-700/50 transition-colors"
+                >
+                    <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400">
+                        {getFileIcon(m.fileType)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-white truncate">{m.fileName}</div>
+                        <div className="text-xs text-zinc-400">{m.fileSize ? formatFileSize(m.fileSize) : ""}</div>
+                    </div>
+                    <Download size={16} className="text-zinc-400 hover:text-white transition-colors" />
+                </a>
+            );
+        }
+        return <div className={m.isAi ? 'whitespace-pre-wrap' : ''}>{m.text}</div>;
     };
 
     return (
@@ -344,7 +521,7 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
                                             : 'bg-zinc-800/80 text-zinc-200 rounded-bl-sm border border-zinc-700/50'
                                         }`}>
                                         {!isMe && <div className={`text-xs font-semibold mb-1 ${m.isAi ? 'text-purple-400' : 'text-indigo-400'}`}>{m.userName}</div>}
-                                        <div className={m.isAi ? 'whitespace-pre-wrap' : ''}>{m.text}</div>
+                                        {renderMessageContent(m)}
                                     </div>
                                 </div>
                                 <div className="text-[10px] text-zinc-500 mt-1 mx-8 font-mono">
@@ -431,12 +608,43 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
                     >
                         <Smile size={18} />
                     </Button>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={`absolute left-10 hover:text-white transition-colors ${
+                            uploadingFile ? "text-indigo-400" : "text-zinc-400"
+                        }`}
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadingFile}
+                        title="Attach file"
+                    >
+                        <Paperclip size={18} />
+                    </Button>
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileSelect}
+                        className="hidden"
+                        disabled={uploadingFile}
+                    />
+                    {uploadingFile && (
+                        <div className="absolute left-20 top-1/2 -translate-y-1/2 flex items-center gap-2 text-xs text-indigo-400">
+                            <div className="w-24 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-indigo-500 transition-all duration-300"
+                                    style={{ width: `${uploadProgress}%` }}
+                                />
+                            </div>
+                            <span>{uploadProgress}%</span>
+                        </div>
+                    )}
                     <Input
                         ref={inputRef}
                         value={text}
                         onChange={handleTextChange}
                         placeholder="Type a message..."
-                        className="w-full bg-zinc-950 border-zinc-800 pl-10 pr-10 focus-visible:ring-indigo-500 rounded-full h-10"
+                        className="w-full bg-zinc-950 border-zinc-800 pl-20 pr-10 focus-visible:ring-indigo-500 rounded-full h-10"
                     />
                     <Button
                         type="submit"

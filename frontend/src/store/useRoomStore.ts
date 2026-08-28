@@ -20,6 +20,12 @@ interface Message {
     text: string;
     timestamp: string;
     isAi?: boolean;
+    // File sharing fields
+    type?: "text" | "file";
+    fileName?: string;
+    fileSize?: number;
+    fileUrl?: string;
+    fileType?: string;
 }
 
 export interface Poll {

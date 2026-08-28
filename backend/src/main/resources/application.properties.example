@@ -40,3 +40,8 @@ openrouter.api.key=${OPENROUTER_API_KEY:}
 logging.level.root=INFO
 logging.level.com.project=DEBUG
 logging.level.org.springframework.web.socket=INFO
+
+# File Upload Configuration
+# file.upload.dir=./uploads
+# file.upload.max-size=52428800
+# file.upload.allowed-types=image/*,video/*,audio/*,application/pdf,text/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,application/x-zip-compressed

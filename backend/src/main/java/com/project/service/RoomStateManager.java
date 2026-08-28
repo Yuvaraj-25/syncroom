@@ -29,6 +29,9 @@ public class RoomStateManager {
     // roomId -> List<Map<String, Object>>
     private final Map<String, List<Map<String, Object>>> roomQA = new ConcurrentHashMap<>();
 
+    // roomId -> List<Map<String, Object>> (shared files)
+    private final Map<String, List<Map<String, Object>>> roomFiles = new ConcurrentHashMap<>();
+
     // ── Room Name ─────────────────────────────────────────────────────────────
 
     public void setRoomName(String roomId, String name) {
@@ -435,6 +438,23 @@ public class RoomStateManager {
         List<Map<String, Object>> list = getQuestions(roomId);
         synchronized (list) {
             list.removeIf(q -> Objects.equals(String.valueOf(q.get("id")), String.valueOf(questionId)));
+        }
+    }
+
+    // ── Shared Files ────────────────────────────────────────────────────────────
+
+    public List<Map<String, Object>> getRoomFiles(String roomId) {
+        return roomFiles.computeIfAbsent(roomId, k -> Collections.synchronizedList(new ArrayList<>()));
+    }
+
+    public void addRoomFile(String roomId, Map<String, Object> fileInfo) {
+        List<Map<String, Object>> files = getRoomFiles(roomId);
+        synchronized (files) {
+            files.add(0, new HashMap<>(fileInfo)); // Add to beginning for newest first
+            // Cap at 500 files per room
+            if (files.size() > 500) {
+                files.subList(500, files.size()).clear();
+            }
         }
     }
 

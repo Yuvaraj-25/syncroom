@@ -202,14 +202,27 @@ export function useWebRTC(
     useEffect(() => {
         if (!userId) return;
 
+        // STUN/TURN configuration for NAT traversal
+        const iceServers = [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun2.l.google.com:19302" },
+            { urls: "stun:stun3.l.google.com:19302" },
+            { urls: "stun:stun4.l.google.com:19302" },
+        ];
+
         const newPeer = new Peer(userId, {
             host: process.env.NEXT_PUBLIC_PEER_HOST || "localhost",
             port: parseInt(process.env.NEXT_PUBLIC_PEER_PORT || "4000"),
             path: "/peerjs/myapp",
+            config: { iceServers },
+            debug: process.env.NODE_ENV === "development" ? 2 : 0,
         });
 
         setPeer(newPeer);
 
+        // Set up call handler IMMEDIATELY to avoid race condition
+        // where incoming calls arrive before getUserMedia completes
         const setupCallHandler = (stream: MediaStream) => {
             newPeer.on("call", (call: MediaConnection) => {
                 call.answer(stream);
@@ -220,9 +233,77 @@ export function useWebRTC(
                     }));
                     updateUser(call.peer, { stream: userVideoStream });
                 });
+                call.on("error", (err) => {
+                    console.error(`[useWebRTC] Call error with ${call.peer}:`, err);
+                });
+                call.on("close", () => {
+                    console.log(`[useWebRTC] Call closed with ${call.peer}`);
+                    delete callsRef.current[call.peer];
+                    setRemoteStreams((prev) => {
+                        const next = { ...prev };
+                        delete next[call.peer];
+                        return next;
+                    });
+                    updateUser(call.peer, { stream: undefined });
+                });
                 callsRef.current[call.peer] = call;
             });
         };
+
+        // Set up call handler immediately with a placeholder stream
+        // Will be updated with real stream once getUserMedia resolves
+        let pendingStream: MediaStream | null = null;
+        const callHandlerWrapper = (call: MediaConnection) => {
+            if (pendingStream) {
+                call.answer(pendingStream);
+            } else {
+                // Queue the call to answer once stream is ready
+                const answerWhenReady = () => {
+                    if (pendingStream) {
+                        call.answer(pendingStream);
+                        call.removeListener("error", answerWhenReady);
+                    }
+                };
+                call.on("error", answerWhenReady);
+            }
+            call.on("stream", (userVideoStream: MediaStream) => {
+                setRemoteStreams((prev) => ({
+                    ...prev,
+                    [call.peer]: userVideoStream,
+                }));
+                updateUser(call.peer, { stream: userVideoStream });
+            });
+            call.on("error", (err) => {
+                console.error(`[useWebRTC] Call error with ${call.peer}:`, err);
+            });
+            call.on("close", () => {
+                console.log(`[useWebRTC] Call closed with ${call.peer}`);
+                delete callsRef.current[call.peer];
+                setRemoteStreams((prev) => {
+                    const next = { ...prev };
+                    delete next[call.peer];
+                    return next;
+                });
+                updateUser(call.peer, { stream: undefined });
+            });
+            callsRef.current[call.peer] = call;
+        };
+        newPeer.on("call", callHandlerWrapper);
+
+        // PeerJS connection events
+        newPeer.on("open", (id) => {
+            console.log(`[useWebRTC] PeerJS connected with ID: ${id}`);
+        });
+        newPeer.on("error", (err) => {
+            console.error("[useWebRTC] PeerJS error:", err);
+        });
+        newPeer.on("disconnected", () => {
+            console.warn("[useWebRTC] PeerJS disconnected, attempting reconnect...");
+            newPeer.reconnect();
+        });
+        newPeer.on("close", () => {
+            console.log("[useWebRTC] PeerJS connection closed");
+        });
 
         // Request both audio + video upfront so PeerJS has tracks to share.
         // BOTH video and audio tracks are disabled by default —
@@ -232,8 +313,11 @@ export function useWebRTC(
             .then((stream) => {
                 stream.getVideoTracks().forEach(t => t.enabled = false);
                 stream.getAudioTracks().forEach(t => t.enabled = false);
+                pendingStream = stream;
                 setLocalStream(stream);
                 localStreamRef.current = stream;
+                // Replace the wrapper with the real handler now that we have a stream
+                newPeer.off("call", callHandlerWrapper);
                 setupCallHandler(stream);
             })
             .catch((err) => {
@@ -241,16 +325,20 @@ export function useWebRTC(
                 navigator.mediaDevices.getUserMedia({ audio: true })
                     .then((audioStream) => {
                         audioStream.getAudioTracks().forEach(t => t.enabled = false);
+                        pendingStream = audioStream;
                         setLocalStream(audioStream);
                         localStreamRef.current = audioStream;
+                        newPeer.off("call", callHandlerWrapper);
                         setupCallHandler(audioStream);
                     })
                     .catch((audioErr) => {
                         console.error("getUserMedia (audio-only) also failed:", audioErr);
+                        pendingStream = null;
                     });
             });
 
         return () => {
+            newPeer.off("call", callHandlerWrapper);
             newPeer.destroy();
             // We intentionally DO NOT stop the tracks here to prevent
             // component rerenders or StrictMode from killing the persistent camera feed.

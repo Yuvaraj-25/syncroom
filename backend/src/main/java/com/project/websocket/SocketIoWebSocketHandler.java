@@ -158,6 +158,8 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
             case "upvote-question" -> handleUpvoteQuestion(roomId, dataMap);
             case "answer-question" -> handleAnswerQuestion(roomId, dataMap);
             case "delete-question" -> handleDeleteQuestion(roomId, dataMap);
+            case "file-share" -> handleFileShare(socketId, roomId, dataMap);
+            case "request-files" -> handleRequestFiles(socketId, roomId);
             default -> log.debug("Unhandled event: {}", event);
         }
     }
@@ -532,6 +534,19 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         String questionId = String.valueOf(dataMap.get("questionId"));
         roomStateManager.deleteQuestion(roomId, questionId);
         emitToRoom(roomId, "qa-updated", Map.of("questions", roomStateManager.getQuestions(roomId)));
+    }
+
+    private void handleFileShare(String socketId, String roomId, Map<String, Object> dataMap) {
+        Map<String, Object> fileInfo = new HashMap<>(dataMap);
+        fileInfo.put("senderId", socketId);
+        fileInfo.put("timestamp", System.currentTimeMillis());
+        roomStateManager.addRoomFile(roomId, fileInfo);
+        emitToRoom(roomId, "file-shared", fileInfo);
+    }
+
+    private void handleRequestFiles(String socketId, String roomId) {
+        List<Map<String, Object>> files = roomStateManager.getRoomFiles(roomId);
+        emitToSocket(socketId, "files-list", Map.of("files", files));
     }
 
     @Override
