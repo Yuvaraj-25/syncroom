@@ -6,7 +6,7 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.util.Date;
+import java.time.Instant;
 
 @Entity
 @Table(name = "rooms")
@@ -31,14 +31,12 @@ public class Room {
     private String password;
 
     @CreatedDate
-    @Temporal(TemporalType.TIMESTAMP)
-    @Column(name = "created_at", updatable = false)
-    private Date createdAt;
+    @Column(name = "created_at", updatable = false, columnDefinition = "TIMESTAMP")
+    private Instant createdAt;
 
     @LastModifiedDate
-    @Temporal(TemporalType.TIMESTAMP)
-    @Column(name = "updated_at")
-    private Date updatedAt;
+    @Column(name = "updated_at", columnDefinition = "TIMESTAMP")
+    private Instant updatedAt;
 
     public Room() {
     }
@@ -90,19 +88,19 @@ public class Room {
         this.password = password;
     }
 
-    public Date getCreatedAt() {
+    public Instant getCreatedAt() {
         return createdAt;
     }
 
-    public void setCreatedAt(Date createdAt) {
+    public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
     }
 
-    public Date getUpdatedAt() {
+    public Instant getUpdatedAt() {
         return updatedAt;
     }
 
-    public void setUpdatedAt(Date updatedAt) {
+    public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
     }
 }

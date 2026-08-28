@@ -5,7 +5,7 @@ import jakarta.persistence.*;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.util.Date;
+import java.time.Instant;
 
 @Entity
 @Table(name = "files")
@@ -42,9 +42,8 @@ public class File {
     private String filePath;
 
     @CreatedDate
-    @Temporal(TemporalType.TIMESTAMP)
-    @Column(name = "created_at", updatable = false)
-    private Date createdAt;
+    @Column(name = "created_at", updatable = false, columnDefinition = "TIMESTAMP")
+    private Instant createdAt;
 
     public File() {
     }
@@ -134,11 +133,11 @@ public class File {
         this.filePath = filePath;
     }
 
-    public Date getCreatedAt() {
+    public Instant getCreatedAt() {
         return createdAt;
     }
 
-    public void setCreatedAt(Date createdAt) {
+    public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
     }
 }

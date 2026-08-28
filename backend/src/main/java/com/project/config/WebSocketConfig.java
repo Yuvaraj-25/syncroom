@@ -6,6 +6,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+import org.springframework.web.socket.server.HandshakeInterceptor;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.Map;
 
 @Configuration
 @EnableWebSocket
@@ -23,9 +28,38 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(socketIoWebSocketHandler, "/socket.io/**", "/socket.io/")
-                .setAllowedOriginPatterns("*");
+                .setAllowedOriginPatterns("*")
+                .addInterceptors(proxyHandshakeInterceptor());
 
         registry.addHandler(peerJsWebSocketHandler, "/peerjs/myapp", "/peerjs/**")
-                .setAllowedOriginPatterns("*");
+                .setAllowedOriginPatterns("*")
+                .addInterceptors(proxyHandshakeInterceptor());
+    }
+
+    /**
+     * Interceptor to handle proxy headers (X-Forwarded-Proto, X-Forwarded-For)
+     * for WebSocket upgrade requests behind Render's reverse proxy.
+     */
+    private HandshakeInterceptor proxyHandshakeInterceptor() {
+        return new HandshakeInterceptor() {
+            @Override
+            public boolean beforeHandshake(HttpServletRequest request, HttpServletResponse response,
+                                           org.springframework.web.socket.WebSocketHandler wsHandler,
+                                           Map<String, Object> attributes) {
+                // Handle X-Forwarded-Proto header from Render proxy
+                String forwardedProto = request.getHeader("X-Forwarded-Proto");
+                if ("https".equals(forwardedProto)) {
+                    attributes.put("org.springframework.web.socket.server.support.RemoteIpValve", "https");
+                }
+                return true;
+            }
+
+            @Override
+            public void afterHandshake(HttpServletRequest request, HttpServletResponse response,
+                                       org.springframework.web.socket.WebSocketHandler wsHandler,
+                                       Exception ex) {
+                // No-op
+            }
+        };
     }
 }

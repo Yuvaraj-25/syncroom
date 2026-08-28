@@ -41,10 +41,14 @@ public class SecurityConfig {
                                 "/api/youtube/**",
                                 "/socket.io/**",
                                 "/peerjs/**",
-                                "/error"
+                                "/error",
+                                "/actuator/health",
+                                "/actuator/info"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
+                .httpBasic(AbstractHttpConfigurer::disable)
+                .formLogin(AbstractHttpConfigurer::disable)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

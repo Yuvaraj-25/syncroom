@@ -2,10 +2,8 @@ package com.project.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Embeddable;
-import jakarta.persistence.Temporal;
-import jakarta.persistence.TemporalType;
 
-import java.util.Date;
+import java.time.Instant;
 import java.util.Objects;
 
 @Embeddable
@@ -14,17 +12,16 @@ public class RecentRoom {
     @Column(name = "room_id", nullable = false)
     private String roomId;
 
-    @Temporal(TemporalType.TIMESTAMP)
-    @Column(name = "joined_at")
-    private Date joinedAt;
+    @Column(name = "joined_at", columnDefinition = "TIMESTAMP")
+    private Instant joinedAt;
 
     public RecentRoom() {
-        this.joinedAt = new Date();
+        this.joinedAt = Instant.now();
     }
 
-    public RecentRoom(String roomId, Date joinedAt) {
+    public RecentRoom(String roomId, Instant joinedAt) {
         this.roomId = roomId;
-        this.joinedAt = joinedAt != null ? joinedAt : new Date();
+        this.joinedAt = joinedAt != null ? joinedAt : Instant.now();
     }
 
     public String getRoomId() {
@@ -35,11 +32,11 @@ public class RecentRoom {
         this.roomId = roomId;
     }
 
-    public Date getJoinedAt() {
+    public Instant getJoinedAt() {
         return joinedAt;
     }
 
-    public void setJoinedAt(Date joinedAt) {
+    public void setJoinedAt(Instant joinedAt) {
         this.joinedAt = joinedAt;
     }
 
