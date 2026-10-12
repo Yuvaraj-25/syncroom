@@ -3,7 +3,7 @@
 import { useRoomStore } from "@/store/useRoomStore";
 import { MicOff, VideoOff, Hand } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Renders a <video> element attached to a MediaStream.
@@ -63,6 +63,7 @@ function VideoTile({ stream, isLocal, isVideoOn }: { stream: MediaStream | undef
 // Separate persistent audio element for remote users' audio
 function AudioTile({ stream }: { stream: MediaStream }) {
     const audioRef = useRef<HTMLAudioElement>(null);
+    const [needsUserGesture, setNeedsUserGesture] = useState(false);
 
     useEffect(() => {
         const audio = audioRef.current;
@@ -76,8 +77,9 @@ function AudioTile({ stream }: { stream: MediaStream }) {
             if (audio.paused) {
                 try {
                     await audio.play();
+                    setNeedsUserGesture(false);
                 } catch {
-                    // Ignore autoplay policy errors safely
+                    setNeedsUserGesture(true);
                 }
             }
         };
@@ -91,14 +93,38 @@ function AudioTile({ stream }: { stream: MediaStream }) {
 
         document.addEventListener("visibilitychange", handleVisibilityChange);
         window.addEventListener("focus", handleFocus);
-
+        stream.addEventListener("addtrack", attachAudio);
         return () => {
             document.removeEventListener("visibilitychange", handleVisibilityChange);
             window.removeEventListener("focus", handleFocus);
+            stream.removeEventListener("addtrack", attachAudio);
         };
     }, [stream]);
 
-    return <audio ref={audioRef} autoPlay />;
+    return (
+        <>
+            <audio ref={audioRef} autoPlay />
+            {needsUserGesture && (
+                <button
+                    type="button"
+                    onClick={async () => {
+                        const audio = audioRef.current;
+                        if (!audio) return;
+                        try {
+                            await audio.play();
+                            setNeedsUserGesture(false);
+                        } catch (error) {
+                            console.error("Could not start remote audio:", error);
+                        }
+                    }}
+                    className="absolute inset-x-1 bottom-5 z-20 rounded bg-zinc-950/90 px-1 py-0.5 text-[9px] text-white"
+                    title="Click to enable this participant's audio"
+                >
+                    Enable sound
+                </button>
+            )}
+        </>
+    );
 }
 
 export default function CameraGrid({ currentUserId }: { currentUserId: string }) {

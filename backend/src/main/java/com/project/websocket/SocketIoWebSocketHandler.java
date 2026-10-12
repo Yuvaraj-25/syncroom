@@ -2,8 +2,16 @@ package com.project.websocket;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.project.service.AiAssistantService;
 import com.project.service.RoomStateManager;
+import com.project.model.Message;
+import com.project.model.PinnedNote;
+import com.project.model.RoomMediaState;
+import com.project.repository.MessageRepository;
+import com.project.repository.PinnedNoteRepository;
+import com.project.repository.RoomMediaStateRepository;
+import com.project.service.RoomService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -13,6 +21,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -33,14 +42,27 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
     private final ObjectMapper objectMapper;
     private final RoomStateManager roomStateManager;
     private final AiAssistantService aiAssistantService;
+    private final MessageRepository messageRepository;
+    private final PinnedNoteRepository pinnedNoteRepository;
+    private final RoomMediaStateRepository roomMediaStateRepository;
+    private final RoomService roomService;
+    private final Object roomLifecycleLock = new Object();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
     public SocketIoWebSocketHandler(ObjectMapper objectMapper,
                                     RoomStateManager roomStateManager,
-                                    AiAssistantService aiAssistantService) {
+                                    AiAssistantService aiAssistantService,
+                                    MessageRepository messageRepository,
+                                    PinnedNoteRepository pinnedNoteRepository,
+                                    RoomMediaStateRepository roomMediaStateRepository,
+                                    RoomService roomService) {
         this.objectMapper = objectMapper;
         this.roomStateManager = roomStateManager;
         this.aiAssistantService = aiAssistantService;
+        this.messageRepository = messageRepository;
+        this.pinnedNoteRepository = pinnedNoteRepository;
+        this.roomMediaStateRepository = roomMediaStateRepository;
+        this.roomService = roomService;
     }
 
     @Override
@@ -119,12 +141,15 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
 
         switch (event) {
             case "join-room" -> handleJoinRoom(session, dataMap);
+            case "delete-room" -> handleDeleteRoom(socketId, roomId);
             case "video-play" -> handleVideoPlay(socketId, roomId, dataMap);
             case "video-pause" -> handleVideoPause(socketId, roomId, dataMap);
             case "video-seek" -> handleVideoSeek(socketId, roomId, dataMap);
             case "video-url-change" -> handleVideoUrlChange(socketId, roomId, dataMap);
             case "add-to-queue" -> handleAddToQueue(roomId, dataMap);
             case "remove-from-queue" -> handleRemoveFromQueue(socketId, roomId, dataMap);
+            case "remove-video-history" -> handleRemoveVideoHistory(socketId, roomId, dataMap);
+            case "clear-video-history" -> handleClearVideoHistory(socketId, roomId);
             case "play-next" -> handlePlayNext(socketId, roomId);
             case "draw-line" -> handleDrawLine(socketId, roomId, dataMap);
             case "clear-whiteboard" -> handleClearWhiteboard(socketId, roomId);
@@ -135,6 +160,8 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
             case "request-sync-state" -> broadcastToOthersInRoom(roomId, socketId, "sync-state-request", Map.of("requesterId", socketId));
             case "sync-state-response" -> handleSyncStateResponse(dataMap);
             case "chat-message" -> handleChatMessage(socketId, roomId, dataMap);
+            case "edit-chat-message" -> handleEditChatMessage(socketId, roomId, dataMap);
+            case "delete-chat-message" -> handleDeleteChatMessage(socketId, roomId, dataMap);
             case "typing" -> broadcastToOthersInRoom(roomId, socketId, "typing", dataMap);
             case "toggle-mic" -> handleToggleMic(roomId, dataMap);
             case "toggle-camera" -> handleToggleCamera(roomId, dataMap);
@@ -158,6 +185,9 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
             case "upvote-question" -> handleUpvoteQuestion(roomId, dataMap);
             case "answer-question" -> handleAnswerQuestion(roomId, dataMap);
             case "delete-question" -> handleDeleteQuestion(roomId, dataMap);
+            case "pin-message" -> handlePinMessage(roomId, dataMap);
+            case "unpin-message" -> handleUnpinMessage(roomId, dataMap);
+            case "request-pinned-notes" -> handleRequestPinnedNotes(socketId, roomId);
             case "file-share" -> handleFileShare(socketId, roomId, dataMap);
             case "request-files" -> handleRequestFiles(socketId, roomId);
             default -> log.debug("Unhandled event: {}", event);
@@ -169,11 +199,27 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
     @SuppressWarnings("unchecked")
     private void handleJoinRoom(WebSocketSession session, Map<String, Object> dataMap) {
         String socketId = session.getId();
-        String roomId = String.valueOf(dataMap.get("roomId"));
+        String roomId = Objects.toString(dataMap.get("roomId"), "").trim();
         Map<String, Object> rawUser = (Map<String, Object>) dataMap.get("user");
+        String ownerId = rawUser == null ? "" : Objects.toString(rawUser.get("userId"), "");
 
-        socketToRoom.put(socketId, roomId);
-        Map<String, Object> enhancedUser = roomStateManager.joinRoom(roomId, socketId, rawUser);
+        Map<String, Object> enhancedUser;
+        synchronized (roomLifecycleLock) {
+            if (!roomService.prepareRoomForJoin(roomId, ownerId)) {
+                emitToSocket(socketId, "room-closed", Map.of("roomId", roomId));
+                try {
+                    session.close(CloseStatus.NORMAL);
+                } catch (IOException e) {
+                    log.warn("Could not close rejected room connection for socketId={}", socketId, e);
+                }
+                return;
+            }
+
+            socketToRoom.put(socketId, roomId);
+            enhancedUser = roomStateManager.joinRoom(roomId, socketId, rawUser);
+            enhancedUser.put("isCreator", roomService.isRoomCreator(roomId, ownerId));
+        }
+        restoreMediaState(roomId);
 
         // Broadcast user-joined to other users in room
         broadcastToOthersInRoom(roomId, socketId, "user-joined", Map.of("socketId", socketId, "user", enhancedUser));
@@ -204,6 +250,8 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
 
         // Send current queue
         emitToSocket(socketId, "queue-updated", Map.of("queue", roomStateManager.getQueue(roomId)));
+        emitToSocket(socketId, "video-history-updated",
+                Map.of("history", roomStateManager.getVideoHistorySnapshot(roomId)));
 
         // Send whiteboard stroke history
         List<Map<String, Object>> strokes = roomStateManager.getWhiteboardStrokes(roomId);
@@ -218,6 +266,36 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         // Send current polls and Q&A
         emitToSocket(socketId, "polls-updated", Map.of("polls", roomStateManager.getPolls(roomId)));
         emitToSocket(socketId, "qa-updated", Map.of("questions", roomStateManager.getQuestions(roomId)));
+        emitToSocket(socketId, "chat-history", Map.of("messages", loadChatHistory(roomId)));
+        emitToSocket(socketId, "pinned-notes-updated", Map.of("notes", loadPinnedNotes(roomId)));
+    }
+
+    private void handleDeleteRoom(String socketId, String roomId) {
+        Map<String, Object> user = roomStateManager.getUser(roomId, socketId);
+        String ownerId = user == null ? "" : Objects.toString(user.get("userId"), "");
+        Set<String> roomSocketIds;
+
+        synchronized (roomLifecycleLock) {
+            if (!roomService.closeRoom(roomId, ownerId)) {
+                emitToSocket(socketId, "room-delete-error",
+                        Map.of("message", "Only the person who created this room can delete it."));
+                return;
+            }
+
+            emitToRoom(roomId, "room-closed", Map.of("roomId", roomId));
+            roomSocketIds = roomStateManager.closeRoom(roomId);
+        }
+
+        for (String roomSocketId : roomSocketIds) {
+            WebSocketSession roomSession = sessions.get(roomSocketId);
+            if (roomSession != null && roomSession.isOpen()) {
+                try {
+                    roomSession.close(CloseStatus.NORMAL);
+                } catch (IOException e) {
+                    log.warn("Could not close deleted room connection for socketId={}", roomSocketId, e);
+                }
+            }
+        }
     }
 
     private void handleVideoPlay(String socketId, String roomId, Map<String, Object> dataMap) {
@@ -227,6 +305,7 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
                 time = num.doubleValue();
             }
             roomStateManager.updateVideoPlay(roomId, time);
+            persistMediaState(roomId);
             broadcastToOthersInRoom(roomId, socketId, "video-play", dataMap);
         }
     }
@@ -238,6 +317,7 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
                 time = num.doubleValue();
             }
             roomStateManager.updateVideoPause(roomId, time);
+            persistMediaState(roomId);
             broadcastToOthersInRoom(roomId, socketId, "video-pause", dataMap);
         }
     }
@@ -249,6 +329,7 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
                 time = num.doubleValue();
             }
             roomStateManager.updateVideoSeek(roomId, time);
+            persistMediaState(roomId);
             broadcastToOthersInRoom(roomId, socketId, "video-seek", dataMap);
         }
     }
@@ -256,8 +337,11 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
     private void handleVideoUrlChange(String socketId, String roomId, Map<String, Object> dataMap) {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
             String newUrl = String.valueOf(dataMap.get("newUrl"));
+            recordCurrentVideoInHistory(roomId, newUrl);
             roomStateManager.updateVideoUrl(roomId, newUrl);
+            persistMediaState(roomId);
             emitToRoom(roomId, "video-url-change", dataMap);
+            emitVideoHistory(roomId);
         }
     }
 
@@ -265,6 +349,7 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         Object item = dataMap.get("videoInfo") != null ? dataMap.get("videoInfo") : dataMap.get("videoUrl");
         if (item != null) {
             roomStateManager.addToQueue(roomId, item);
+            persistMediaState(roomId);
             emitToRoom(roomId, "queue-updated", Map.of("queue", roomStateManager.getQueue(roomId)));
         }
     }
@@ -273,8 +358,26 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         if (roomStateManager.isUserOwner(roomId, socketId)) {
             int index = Integer.parseInt(String.valueOf(dataMap.get("index")));
             roomStateManager.removeFromQueue(roomId, index);
+            persistMediaState(roomId);
             emitToRoom(roomId, "queue-updated", Map.of("queue", roomStateManager.getQueue(roomId)));
         }
+    }
+
+    private void handleRemoveVideoHistory(String socketId, String roomId, Map<String, Object> dataMap) {
+        if (!roomStateManager.isUserOwner(roomId, socketId)) return;
+        String url = String.valueOf(dataMap.getOrDefault("url", ""));
+        if (url.isBlank()) return;
+
+        roomStateManager.removeVideoHistory(roomId, url);
+        persistMediaState(roomId);
+        emitVideoHistory(roomId);
+    }
+
+    private void handleClearVideoHistory(String socketId, String roomId) {
+        if (!roomStateManager.isUserOwner(roomId, socketId)) return;
+        roomStateManager.clearVideoHistory(roomId);
+        persistMediaState(roomId);
+        emitVideoHistory(roomId);
     }
 
     @SuppressWarnings("unchecked")
@@ -286,10 +389,82 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
                         ? String.valueOf(((Map<String, Object>) nextItem).get("url"))
                         : String.valueOf(nextItem);
 
+                recordCurrentVideoInHistory(roomId, newUrl);
                 roomStateManager.updateVideoUrl(roomId, newUrl);
+                persistMediaState(roomId);
                 emitToRoom(roomId, "video-url-change", Map.of("newUrl", newUrl));
                 emitToRoom(roomId, "queue-updated", Map.of("queue", roomStateManager.getQueue(roomId)));
+                emitVideoHistory(roomId);
             }
+        }
+    }
+
+    private void recordCurrentVideoInHistory(String roomId, String nextUrl) {
+        RoomStateManager.VideoState current = roomStateManager.getVideoState(roomId);
+        if (current == null || current.getUrl() == null || current.getUrl().isBlank()
+                || Objects.equals(current.getUrl(), nextUrl)) return;
+
+        Map<String, Object> previous = new HashMap<>();
+        previous.put("url", current.getUrl());
+        previous.put("title", "YouTube Video");
+        previous.put("thumbnail", youtubeThumbnail(current.getUrl()));
+        roomStateManager.addVideoHistory(roomId, previous);
+    }
+
+    private String youtubeThumbnail(String url) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?:youtube\\.com/(?:[^/]+/.+/|(?:v|e(?:mbed)?)/|.*[?&]v=)|youtu\\.be/)([^\"&?/\\s]{11})", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(url);
+        return matcher.find() ? "https://img.youtube.com/vi/" + matcher.group(1) + "/mqdefault.jpg" : "";
+    }
+
+    private void emitVideoHistory(String roomId) {
+        emitToRoom(roomId, "video-history-updated",
+                Map.of("history", roomStateManager.getVideoHistorySnapshot(roomId)));
+    }
+
+    private void restoreMediaState(String roomId) {
+        if (roomStateManager.hasMediaState(roomId)) return;
+        roomMediaStateRepository.findById(roomId).ifPresent(saved -> {
+            try {
+                Map<String, Object> payload = objectMapper.readValue(
+                        saved.getPayload(),
+                        new TypeReference<Map<String, Object>>() {}
+                );
+                String url = payload.get("url") == null ? null : String.valueOf(payload.get("url"));
+                boolean isPlaying = Boolean.TRUE.equals(payload.get("isPlaying"));
+                double currentTime = payload.get("currentTime") instanceof Number number ? number.doubleValue() : 0;
+                List<Object> queue = payload.get("queue") instanceof List<?> list
+                        ? new ArrayList<>(list)
+                        : Collections.emptyList();
+                List<Map<String, Object>> history = new ArrayList<>();
+                if (payload.get("history") instanceof List<?> list) {
+                    for (Object item : list) {
+                        Map<String, Object> video = asStringKeyedMap(item);
+                        if (video != null) history.add(video);
+                    }
+                }
+                roomStateManager.restoreMediaState(roomId, url, isPlaying, currentTime, queue, history);
+            } catch (IOException ex) {
+                log.error("Failed to restore saved media state for room {}", roomId, ex);
+            }
+        });
+    }
+
+    private void persistMediaState(String roomId) {
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            RoomStateManager.VideoState videoState = roomStateManager.getVideoState(roomId);
+            if (videoState != null) {
+                payload.put("url", videoState.getUrl());
+                payload.put("isPlaying", videoState.isPlaying());
+                payload.put("currentTime", videoState.getCalculatedCurrentTime());
+            }
+            payload.put("queue", roomStateManager.getQueueSnapshot(roomId));
+            payload.put("history", roomStateManager.getVideoHistorySnapshot(roomId));
+            roomMediaStateRepository.save(new RoomMediaState(roomId, objectMapper.writeValueAsString(payload)));
+        } catch (IOException ex) {
+            log.error("Failed to serialize saved media state for room {}", roomId, ex);
         }
     }
 
@@ -347,26 +522,255 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleChatMessage(String socketId, String roomId, Map<String, Object> dataMap) {
         Object msgObj = dataMap.get("message");
         if (msgObj == null) return;
 
-        emitToRoom(roomId, "chat-message", msgObj);
+        Map<String, Object> message = asStringKeyedMap(msgObj);
+        if (message == null) return;
 
-        if (msgObj instanceof Map) {
-            Map<String, Object> msg = (Map<String, Object>) msgObj;
-            String text = String.valueOf(msg.getOrDefault("text", ""));
-            if (aiAssistantService.isAiTrigger(text)) {
-                emitToRoom(roomId, "typing", Map.of("userName", "SyncRoom AI 🤖"));
+        Map<String, Object> roomUser = roomStateManager.getUser(roomId, socketId);
+        if (roomUser == null) return;
+        message.put("userId", String.valueOf(roomUser.getOrDefault("userId", "anonymous")));
+        message.put("userName", String.valueOf(roomUser.getOrDefault("name", "Guest")));
+        message.put("userImage", String.valueOf(roomUser.getOrDefault("image", "")));
 
-                scheduler.schedule(() -> {
-                    Map<String, Object> aiResponse = aiAssistantService.generateAiResponse(text);
-                    emitToRoom(roomId, "chat-message", aiResponse);
-                }, 400, TimeUnit.MILLISECONDS);
-            }
+        persistChatMessage(roomId, message);
+        emitToRoom(roomId, "chat-message", message);
+
+        String text = String.valueOf(message.getOrDefault("text", ""));
+        if (aiAssistantService.isAiTrigger(text)) {
+            emitToRoom(roomId, "typing", Map.of("userName", "SyncRoom AI 🤖"));
+
+            scheduler.schedule(() -> {
+                Map<String, Object> aiResponse = aiAssistantService.generateAiResponse(text);
+                persistChatMessage(roomId, aiResponse);
+                emitToRoom(roomId, "chat-message", aiResponse);
+            }, 400, TimeUnit.MILLISECONDS);
         }
     }
+
+    private void handleEditChatMessage(String socketId, String roomId, Map<String, Object> dataMap) {
+        String messageId = String.valueOf(dataMap.getOrDefault("messageId", ""));
+        String text = String.valueOf(dataMap.getOrDefault("text", "")).trim();
+        Message savedMessage = findOwnedTextMessage(socketId, roomId, messageId);
+        if (savedMessage == null) return;
+        if (text.isBlank()) {
+            emitChatOperationError(socketId, "A message cannot be empty.");
+            return;
+        }
+
+        try {
+            Map<String, Object> message = objectMapper.readValue(
+                    savedMessage.getPayload(),
+                    new TypeReference<Map<String, Object>>() {}
+            );
+            message.put("text", text);
+            message.put("edited", true);
+            savedMessage.setText(text);
+            savedMessage.setPayload(writeChatPayload(message));
+            messageRepository.save(savedMessage);
+            roomStateManager.updateRoomMessage(roomId, message);
+            emitToRoom(roomId, "chat-message-updated", message);
+        } catch (IOException ex) {
+            log.error("Failed to update chat message {} in room {}", messageId, roomId, ex);
+            emitChatOperationError(socketId, "The message could not be updated. Please try again.");
+        }
+    }
+
+    private void handleDeleteChatMessage(String socketId, String roomId, Map<String, Object> dataMap) {
+        String messageId = String.valueOf(dataMap.getOrDefault("messageId", ""));
+        Message savedMessage = findOwnedTextMessage(socketId, roomId, messageId);
+        if (savedMessage == null) return;
+
+        messageRepository.delete(savedMessage);
+        roomStateManager.removeRoomMessage(roomId, messageId);
+        emitToRoom(roomId, "chat-message-deleted", Map.of("messageId", messageId));
+    }
+
+    private Message findOwnedTextMessage(String socketId, String roomId, String messageId) {
+        Map<String, Object> roomUser = roomStateManager.getUser(roomId, socketId);
+        if (roomUser == null || messageId.isBlank()) return null;
+
+        String userId = String.valueOf(roomUser.getOrDefault("userId", "anonymous"));
+        Optional<Message> saved = messageRepository.findFirstByRoomIdAndClientMessageId(roomId, messageId);
+        if (saved.isEmpty()) {
+            for (Message candidate : messageRepository.findTop500ByRoomIdAndUserIdOrderByCreatedAtDesc(roomId, userId)) {
+                if (candidate.getPayload() == null) continue;
+                try {
+                    Map<String, Object> payload = objectMapper.readValue(
+                            candidate.getPayload(),
+                            new TypeReference<Map<String, Object>>() {}
+                    );
+                    if (Objects.equals(String.valueOf(payload.get("id")), messageId)) {
+                        candidate.setClientMessageId(messageId);
+                        saved = Optional.of(messageRepository.save(candidate));
+                        break;
+                    }
+                } catch (IOException ex) {
+                    log.error("Failed to inspect chat message {} in room {}", candidate.getId(), roomId, ex);
+                }
+            }
+        }
+        if (saved.isEmpty() || !Objects.equals(saved.get().getUserId(), userId)) {
+            emitChatOperationError(socketId, "You can only change your own text messages.");
+            return null;
+        }
+        if (saved.get().getPayload() == null) {
+            emitChatOperationError(socketId, "This message cannot be changed.");
+            return null;
+        }
+
+        try {
+            Map<String, Object> payload = objectMapper.readValue(
+                    saved.get().getPayload(),
+                    new TypeReference<Map<String, Object>>() {}
+            );
+            if ("file".equals(payload.get("type")) || Boolean.TRUE.equals(payload.get("isAi"))) return null;
+        } catch (IOException | IllegalArgumentException ex) {
+            log.error("Failed to verify chat message {} in room {}", messageId, roomId, ex);
+            emitChatOperationError(socketId, "The message could not be verified.");
+            return null;
+        }
+        return saved.get();
+    }
+
+    private void emitChatOperationError(String socketId, String message) {
+        emitToSocket(socketId, "chat-operation-error", Map.of("message", message));
+    }
+
+    private List<Map<String, Object>> loadChatHistory(String roomId) {
+        List<Message> savedMessages = messageRepository.findTop500ByRoomIdOrderByCreatedAtDesc(roomId);
+        if (savedMessages.isEmpty()) {
+            return roomStateManager.getRoomMessages(roomId);
+        }
+        List<Map<String, Object>> history = new ArrayList<>(savedMessages.size());
+        for (Message savedMessage : savedMessages) {
+            try {
+                Map<String, Object> message = savedMessage.getPayload() == null
+                        ? new HashMap<>()
+                        : objectMapper.readValue(
+                                savedMessage.getPayload(),
+                                new TypeReference<Map<String, Object>>() {}
+                        );
+                message.putIfAbsent("id", savedMessage.getId());
+                message.putIfAbsent("userId", savedMessage.getUserId());
+                message.putIfAbsent("userName", savedMessage.getUserName());
+                message.putIfAbsent("userImage", savedMessage.getUserImage());
+                message.putIfAbsent("text", savedMessage.getText());
+                message.putIfAbsent("timestamp", savedMessage.getCreatedAt() == null
+                        ? Instant.now().toString()
+                        : savedMessage.getCreatedAt().toString());
+                history.add(message);
+            } catch (IOException ex) {
+                log.error("Failed to restore chat message {} for room {}", savedMessage.getId(), roomId, ex);
+            }
+        }
+        Collections.reverse(history);
+        return history;
+    }
+
+    private void persistChatMessage(String roomId, Map<String, Object> messageData) {
+        String text = String.valueOf(messageData.getOrDefault("text", ""));
+        if (text.isBlank()) {
+            log.warn("Not saving an empty chat message for room {}", roomId);
+            return;
+        }
+
+        Message message = new Message(
+                roomId,
+                String.valueOf(messageData.getOrDefault("userId", "unknown")),
+                text,
+                String.valueOf(messageData.getOrDefault("userName", "Guest")),
+                String.valueOf(messageData.getOrDefault("userImage", ""))
+        );
+        message.setPayload(writeChatPayload(messageData));
+        message.setClientMessageId(String.valueOf(messageData.getOrDefault("id", "")));
+        message.setCreatedAt(readMessageTimestamp(messageData.get("timestamp")));
+        messageRepository.save(message);
+        roomStateManager.addRoomMessage(roomId, messageData);
+    }
+
+    private String writeChatPayload(Map<String, Object> messageData) {
+        try {
+            return objectMapper.writeValueAsString(messageData);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to save chat message payload", ex);
+        }
+    }
+
+    private Instant readMessageTimestamp(Object timestamp) {
+        if (timestamp instanceof String value) {
+            try {
+                return Instant.parse(value);
+            } catch (RuntimeException ex) {
+                log.warn("Invalid chat timestamp '{}'; using server time", value);
+            }
+        }
+        return Instant.now();
+    }
+
+    private Map<String, Object> asStringKeyedMap(Object value) {
+        if (!(value instanceof Map<?, ?> source)) return null;
+        Map<String, Object> result = new HashMap<>();
+        source.forEach((key, item) -> {
+            if (key instanceof String stringKey) result.put(stringKey, item);
+        });
+        return result;
+    }
+
+    private void handlePinMessage(String roomId, Map<String, Object> dataMap) {
+        Map<String, Object> message = asStringKeyedMap(dataMap.get("message"));
+        if (message == null || message.get("id") == null) return;
+        String noteId = String.valueOf(message.get("id"));
+        pinnedNoteRepository.deleteByRoomIdAndNoteId(roomId, noteId);
+        pinnedNoteRepository.save(new PinnedNote(
+                roomId,
+                noteId,
+                writeChatPayload(message),
+                Instant.now()
+        ));
+        roomStateManager.addPinnedNote(roomId, message);
+
+        emitToRoom(roomId, "pinned-notes-updated",
+                Map.of("notes", loadPinnedNotes(roomId)));
+    }
+
+    private void handleUnpinMessage(String roomId, Map<String, Object> dataMap) {
+        String noteId = String.valueOf(dataMap.get("noteId"));
+
+        if (noteId == null || "null".equals(noteId)) {
+            return;
+        }
+
+        pinnedNoteRepository.deleteByRoomIdAndNoteId(roomId, noteId);
+        roomStateManager.removePinnedNote(roomId, noteId);
+
+        emitToRoom(roomId, "pinned-notes-updated",
+                Map.of("notes", loadPinnedNotes(roomId)));
+    }
+
+    private void handleRequestPinnedNotes(String socketId, String roomId) {
+        emitToSocket(socketId, "pinned-notes-updated",
+                Map.of("notes", loadPinnedNotes(roomId)));
+    }
+
+    private List<Map<String, Object>> loadPinnedNotes(String roomId) {
+        List<Map<String, Object>> notes = new ArrayList<>();
+        for (PinnedNote pinnedNote : pinnedNoteRepository.findByRoomIdOrderByPinnedAtDesc(roomId)) {
+            try {
+                Map<String, Object> note = objectMapper.readValue(
+                        pinnedNote.getPayload(),
+                        new TypeReference<Map<String, Object>>() {}
+                );
+                notes.add(note);
+            } catch (IOException ex) {
+                log.error("Failed to restore pinned note {} for room {}", pinnedNote.getNoteId(), roomId, ex);
+            }
+        }
+        return notes;
+    }
+
 
     private void handleToggleMic(String roomId, Map<String, Object> dataMap) {
         String userId = String.valueOf(dataMap.get("userId"));
@@ -541,6 +945,21 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         fileInfo.put("senderId", socketId);
         fileInfo.put("timestamp", System.currentTimeMillis());
         roomStateManager.addRoomFile(roomId, fileInfo);
+
+        Map<String, Object> chatFile = new HashMap<>();
+        chatFile.put("id", fileInfo.getOrDefault("id", UUID.randomUUID().toString()));
+        chatFile.put("userId", socketId);
+        chatFile.put("userName", fileInfo.getOrDefault("uploaderName", "Guest"));
+        chatFile.put("userImage", fileInfo.getOrDefault("uploaderImage", ""));
+        chatFile.put("text", fileInfo.getOrDefault("originalFilename", "Shared file"));
+        chatFile.put("timestamp", Instant.now().toString());
+        chatFile.put("type", "file");
+        chatFile.put("fileName", fileInfo.getOrDefault("originalFilename", "Shared file"));
+        chatFile.put("fileSize", fileInfo.get("fileSize"));
+        chatFile.put("fileUrl", fileInfo.get("downloadUrl"));
+        chatFile.put("fileType", fileInfo.get("contentType"));
+        persistChatMessage(roomId, chatFile);
+
         emitToRoom(roomId, "file-shared", fileInfo);
     }
 
@@ -558,6 +977,7 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
         RoomStateManager.DisconnectResult result = roomStateManager.removeUserFromAllRooms(socketId);
         if (result != null) {
             String roomId = result.getRoomId();
+            persistMediaState(roomId);
             broadcastToOthersInRoom(roomId, socketId, "user-left", Map.of("socketId", socketId, "user", result.getUser()));
 
             if (result.getNewPrimarySocketId() != null) {

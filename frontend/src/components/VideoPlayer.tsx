@@ -36,12 +36,16 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
         }
     }, [isOwner, stableIsOwner]);
 
-    const [url, setUrl] = useState("aqz-KE-bpKQ"); // YouTube Video ID
+    const [url, setUrl] = useState("aqz-KE-bpKQ"); // Default bunny sample video
     const [isVideoType, setIsVideoType] = useState<"youtube" | "local">("youtube");
+    const [autoplayEnabled, setAutoplayEnabled] = useState(false);
+    const [autoplayRequest, setAutoplayRequest] = useState(0);
     const [localVideoUrl, setLocalVideoUrl] = useState("");
     const [isVertical, setIsVertical] = useState(false);
     const [inputUrl, setInputUrl] = useState("");
     const ytPlayerRef = useRef<YouTubePlayer | null>(null);
+    const autoplayRequestRef = useRef(autoplayRequest);
+    autoplayRequestRef.current = autoplayRequest;
     const nativeVideoRef = useRef<HTMLVideoElement | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isWhiteboardActive, setIsWhiteboardActive] = useState(false);
@@ -77,13 +81,13 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
     // Global hotkey 'c' for chat toggle in fullscreen
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (!isFullscreen) return;
             const target = e.target as HTMLElement;
             if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
 
             const key = e.code === "Space" ? "space" : e.key.toLowerCase();
 
             if (key === shortcuts.chat) {
+                if (!isFullscreen) return;
                 e.preventDefault();
                 setIsChatVisible(prev => !prev);
             } else if (key === shortcuts.whiteboard) {
@@ -166,6 +170,8 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
             if (videoId) {
                 setIsVideoType("youtube");
                 setUrl(videoId);
+                setAutoplayEnabled(true);
+                setAutoplayRequest((request) => request + 1);
             }
             setInputUrl("");
         });
@@ -279,7 +285,8 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
 
 
 
-    const handleEnd = () => {
+    const handleEnd = (playerGeneration?: number) => {
+        if (playerGeneration !== undefined && playerGeneration !== autoplayRequestRef.current) return;
         if (!isOwner) return;
         if (videoQueue.length > 0) {
             socket.emit("play-next", { roomId });
@@ -358,13 +365,13 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
         height: '100%',
         width: '100%',
         playerVars: {
-            autoplay: 0,
+            autoplay: autoplayEnabled ? 1 : 0,
             controls: stableIsOwner ? 1 : 0, // Hide YouTube controls for non-owners
             disablekb: stableIsOwner ? 0 : 1, // Disable keyboard for non-owners
             fs: 0, // Disable native fullscreen so we use our custom wrapper fullscreen
             rel: 0,
         },
-    }), [stableIsOwner]);
+    }), [autoplayEnabled, stableIsOwner]);
 
     return (
         <div className="flex flex-col h-full">
@@ -424,7 +431,7 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
                         onClick={() => setIsWhiteboardActive(!isWhiteboardActive)}
                         className={`shrink-0 h-9 transition-colors ${isWhiteboardActive ? "text-indigo-400 bg-indigo-500/10" : "text-zinc-400 hover:text-white"}`}
                     >
-                        <PenTool size={14} className="mr-1.5" /> Annotate
+                        <PenTool size={14} className="mr-1.5" /> Whiteboard
                     </Button>
                     <input
                         type="file"
@@ -524,18 +531,19 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
                     />
                 )}
 
-                {isVideoType === "youtube" ? (
+                {isVideoType === "youtube" && url ? (
                     <YouTube
+                        key={autoplayRequest}
                         videoId={url}
                         opts={opts}
                         onReady={(e: YouTubeEvent) => ytPlayerRef.current = e.target}
                         onPlay={handlePlay}
                         onPause={handlePause}
-                        onEnd={handleEnd}
+                        onEnd={() => handleEnd(autoplayRequest)}
                         className="absolute inset-0 w-full h-full pointer-events-auto"
                         iframeClassName="w-full h-full"
                     />
-                ) : (
+                ) : isVideoType === "local" && localVideoUrl ? (
                     <div
                         className={`transition-all duration-500 ease-out relative flex items-center justify-center pointer-events-auto overflow-hidden ${isVertical
                                 ? "h-[90%] aspect-[9/16] rounded-2xl border-2 border-zinc-800/80 shadow-[0_0_50px_rgba(99,102,241,0.2)] bg-zinc-950"
@@ -551,14 +559,12 @@ export default function VideoPlayer({ socket, roomId, onToggleQueue, isQueueOpen
                             onPlay={handlePlay}
                             onPause={handlePause}
                             onSeeked={(e) => handleSeek((e.target as HTMLVideoElement).currentTime)}
-                            onEnded={handleEnd}
+                            onEnded={() => handleEnd()}
                             onLoadedMetadata={handleLoadedMetadata}
                         />
                     </div>
-                )}
+                ) : null}
             </div>
         </div>
     );
 }
-
-

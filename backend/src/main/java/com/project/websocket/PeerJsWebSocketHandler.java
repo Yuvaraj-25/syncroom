@@ -73,15 +73,13 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
             // Handle PeerJS protocol message types
             switch (type.toUpperCase()) {
                 case "HEARTBEAT", "PING" -> {
-                    // Heartbeat / Ping response to prevent client timeouts
-                    session.sendMessage(new TextMessage("{\"type\":\"PONG\"}"));
                     return;
                 }
                 case "OFFER", "ANSWER", "CANDIDATE", "LEAVE" -> {
                     // These are signaling messages that should be forwarded to the target peer
                     String dst = root.path("dst").asText("");
                     if (!dst.isBlank()) {
-                        forwardToPeer(dst, payload);
+                        forwardToPeer(dst, sessionToPeerId.get(session.getId()), root);
                     } else {
                         log.warn("PeerJS {} message missing 'dst' field: {}", type, payload);
                     }
@@ -91,7 +89,7 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
                     // Unknown message type, try to forward if it has dst
                     String dst = root.path("dst").asText("");
                     if (!dst.isBlank()) {
-                        forwardToPeer(dst, payload);
+                        forwardToPeer(dst, sessionToPeerId.get(session.getId()), root);
                     } else {
                         log.debug("PeerJS unknown message type '{}' without dst: {}", type, payload);
                     }
@@ -102,12 +100,18 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void forwardToPeer(String dst, String payload) {
+    private void forwardToPeer(String dst, String sourcePeerId, JsonNode payload) {
+        if (sourcePeerId == null || !payload.isObject()) {
+            log.warn("Cannot forward PeerJS message without a registered source peer: dst={}", dst);
+            return;
+        }
         WebSocketSession targetSession = peers.get(dst);
         if (targetSession != null && targetSession.isOpen()) {
             synchronized (targetSession) {
                 try {
-                    targetSession.sendMessage(new TextMessage(payload));
+                    ObjectNode forwardedMessage = ((ObjectNode) payload).deepCopy();
+                    forwardedMessage.put("src", sourcePeerId);
+                    targetSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(forwardedMessage)));
                     log.debug("PeerJS forwarded message to dst={}", dst);
                 } catch (Exception e) {
                     log.error("Failed to forward message to dst={}", dst, e);
@@ -124,7 +128,7 @@ public class PeerJsWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String peerId = sessionToPeerId.remove(session.getId());
         if (peerId != null) {
-            peers.remove(peerId);
+            peers.remove(peerId, session);
             log.info("PeerJS client disconnected: peerId={}, status={}", peerId, status);
 
             // Notify other peers that this peer has left (optional)
