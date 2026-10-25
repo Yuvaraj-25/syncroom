@@ -4,10 +4,10 @@ import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
+import {
     Play, Zap, Video, Sparkles, 
     Laptop, Edit3, ChevronDown, 
-    ArrowRight, Info, Layers, HelpCircle
+    ArrowRight, Info, Layers, HelpCircle, X
 } from "lucide-react";
 
 export default function Home() {
@@ -19,6 +19,11 @@ export default function Home() {
 
     // Active Feature showcase tab
     const [activeFeature, setActiveFeature] = useState<number>(0);
+    const [showGuestSignIn, setShowGuestSignIn] = useState(false);
+    const [guestName, setGuestName] = useState("");
+    const [guestEmail, setGuestEmail] = useState("");
+    const [signInError, setSignInError] = useState("");
+    const [isSigningIn, setIsSigningIn] = useState(false);
 
 
 
@@ -30,21 +35,29 @@ export default function Home() {
 
 
 
-    const handleSignIn = async () => {
+    const handleSignIn = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setSignInError("");
+        setIsSigningIn(true);
+
         try {
             const res = await signIn("credentials", {
                 redirect: false,
                 callbackUrl: "/dashboard",
-                name: "SyncRoom User",
-                email: "user@syncroom.dev"
+                name: guestName.trim(),
+                email: guestEmail.trim()
             });
-            if (res?.ok || !res?.error) {
+            if (res?.ok) {
                 router.push("/dashboard");
                 router.refresh();
+            } else {
+                setSignInError("We couldn't sign you in. Please check your details and try again.");
             }
         } catch (err) {
             console.error("Sign in error:", err);
-            router.push("/dashboard");
+            setSignInError("Sign-in failed. Please try again.");
+        } finally {
+            setIsSigningIn(false);
         }
     };
 
@@ -151,7 +164,7 @@ export default function Home() {
                         Status: Fully Optimized
                     </span>
                     <button
-                        onClick={handleSignIn}
+                        onClick={() => setShowGuestSignIn(true)}
                         className="px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 rounded-xl transition-all duration-300 cursor-pointer active:scale-95 shadow-md shadow-indigo-600/20"
                     >
                         Sign In
@@ -183,7 +196,7 @@ export default function Home() {
 
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 pt-3">
                         <button
-                            onClick={handleSignIn}
+                            onClick={() => setShowGuestSignIn(true)}
                             className="inline-flex items-center justify-center gap-2.5 px-7 py-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white font-extrabold text-sm hover:shadow-[0_0_40px_rgba(99,102,241,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all duration-300 cursor-pointer"
                         >
                             Open Dashboard Console
@@ -496,6 +509,85 @@ export default function Home() {
                     </div>
                 </div>
             </footer>
+
+            {showGuestSignIn && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 backdrop-blur-sm"
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) setShowGuestSignIn(false);
+                    }}
+                >
+                    <form
+                        onSubmit={handleSignIn}
+                        className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl"
+                    >
+                        <div className="mb-5 flex items-start justify-between">
+                            <div>
+                                <h2 className="text-lg font-bold text-white">Join SyncRoom</h2>
+                                <p className="mt-1 text-sm text-zinc-400">
+                                    Choose the name others will see in the room.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowGuestSignIn(false)}
+                                className="rounded-md p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                                aria-label="Close sign-in form"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <label className="mb-1.5 block text-sm font-medium text-zinc-200" htmlFor="guest-name">
+                            Display name
+                        </label>
+                        <input
+                            id="guest-name"
+                            name="name"
+                            autoComplete="nickname"
+                            required
+                            maxLength={60}
+                            value={guestName}
+                            onChange={(event) => setGuestName(event.target.value)}
+                            placeholder="For example, Alex"
+                            className="mb-4 h-11 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+                        />
+
+                        <label className="mb-1.5 block text-sm font-medium text-zinc-200" htmlFor="guest-email">
+                            Email
+                        </label>
+                        <input
+                            id="guest-email"
+                            name="email"
+                            type="email"
+                            autoComplete="email"
+                            required
+                            maxLength={254}
+                            value={guestEmail}
+                            onChange={(event) => setGuestEmail(event.target.value)}
+                            placeholder="you@example.com"
+                            className="h-11 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+                        />
+                        <p className="mt-2 text-xs text-zinc-500">
+                            This is a guest identity for testing; no account is created.
+                        </p>
+
+                        {signInError && (
+                            <p role="alert" className="mt-3 text-sm text-red-400">
+                                {signInError}
+                            </p>
+                        )}
+
+                        <button
+                            type="submit"
+                            disabled={isSigningIn}
+                            className="mt-5 h-11 w-full rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-wait disabled:opacity-60"
+                        >
+                            {isSigningIn ? "Signing in..." : "Continue as guest"}
+                        </button>
+                    </form>
+                </div>
+            )}
         </div>
     );
 }

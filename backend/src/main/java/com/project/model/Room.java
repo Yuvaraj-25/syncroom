@@ -27,6 +27,9 @@ public class Room {
     @Column(name = "is_private")
     private boolean isPrivate = false;
 
+    @Column(name = "is_closed", nullable = false, columnDefinition = "boolean not null default false")
+    private boolean isClosed = false;
+
     @Column(name = "password")
     private String password;
 
@@ -78,6 +81,14 @@ public class Room {
 
     public void setPrivate(boolean aPrivate) {
         isPrivate = aPrivate;
+    }
+
+    public boolean isClosed() {
+        return isClosed;
+    }
+
+    public void setClosed(boolean closed) {
+        isClosed = closed;
     }
 
     public String getPassword() {

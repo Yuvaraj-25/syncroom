@@ -20,6 +20,9 @@ public class RoomStateManager {
     // roomId -> List<Object>
     private final Map<String, List<Object>> roomQueues = new ConcurrentHashMap<>();
 
+    // roomId -> previously played videos, newest first
+    private final Map<String, List<Map<String, Object>>> roomVideoHistory = new ConcurrentHashMap<>();
+
     // roomId -> List<Map<String, Object>>
     private final Map<String, List<Map<String, Object>>> roomWhiteboardStrokes = new ConcurrentHashMap<>();
 
@@ -28,6 +31,10 @@ public class RoomStateManager {
 
     // roomId -> List<Map<String, Object>>
     private final Map<String, List<Map<String, Object>>> roomQA = new ConcurrentHashMap<>();
+
+    private final Map<String, List<Map<String, Object>>> roomMessages = new ConcurrentHashMap<>();
+
+    private final Map<String, List<Map<String, Object>>> roomPinnedNotes = new ConcurrentHashMap<>();
 
     // roomId -> List<Map<String, Object>> (shared files)
     private final Map<String, List<Map<String, Object>>> roomFiles = new ConcurrentHashMap<>();
@@ -98,6 +105,31 @@ public class RoomStateManager {
 
     public VideoState getVideoState(String roomId) {
         return roomVideoStates.get(roomId);
+    }
+
+    public boolean hasMediaState(String roomId) {
+        return roomVideoStates.containsKey(roomId)
+                || roomQueues.containsKey(roomId)
+                || roomVideoHistory.containsKey(roomId);
+    }
+
+    public void restoreMediaState(String roomId, String url, boolean isPlaying, double currentTime,
+                                  List<Object> queue, List<Map<String, Object>> history) {
+        if (url != null && !url.isBlank()) {
+            roomVideoStates.put(roomId, new VideoState(url, isPlaying, currentTime));
+        }
+        List<Object> roomQueue = getQueue(roomId);
+        synchronized (roomQueue) {
+            roomQueue.clear();
+            if (queue != null) roomQueue.addAll(queue);
+        }
+        List<Map<String, Object>> roomHistory = getVideoHistory(roomId);
+        synchronized (roomHistory) {
+            roomHistory.clear();
+            if (history != null) {
+                history.stream().limit(100).forEach(item -> roomHistory.add(new HashMap<>(item)));
+            }
+        }
     }
 
     public void updateVideoUrl(String roomId, String url) {
@@ -245,6 +277,22 @@ public class RoomStateManager {
         return new HashSet<>(roomUsers.keySet());
     }
 
+    public synchronized Set<String> closeRoom(String roomId) {
+        Set<String> socketIds = getSocketIdsInRoom(roomId);
+        rooms.remove(roomId);
+        roomNames.remove(roomId);
+        roomVideoStates.remove(roomId);
+        roomQueues.remove(roomId);
+        roomVideoHistory.remove(roomId);
+        roomWhiteboardStrokes.remove(roomId);
+        roomPolls.remove(roomId);
+        roomQA.remove(roomId);
+        roomMessages.remove(roomId);
+        roomPinnedNotes.remove(roomId);
+        roomFiles.remove(roomId);
+        return socketIds;
+    }
+
     public synchronized DisconnectResult removeUserFromAllRooms(String socketId) {
         DisconnectResult result = null;
         for (Iterator<Map.Entry<String, Map<String, Map<String, Object>>>> it = rooms.entrySet().iterator(); it.hasNext(); ) {
@@ -260,11 +308,10 @@ public class RoomStateManager {
                 if (roomUsers.isEmpty()) {
                     it.remove();
                     roomNames.remove(roomId);
-                    roomVideoStates.remove(roomId);
-                    roomQueues.remove(roomId);
                     roomWhiteboardStrokes.remove(roomId);
                     roomPolls.remove(roomId);
                     roomQA.remove(roomId);
+                    roomPinnedNotes.remove(roomId);
                 } else if (wasPrimary) {
                     newPrimarySocketId = roomUsers.keySet().iterator().next();
                     Map<String, Object> newPrimary = roomUsers.get(newPrimarySocketId);
@@ -290,6 +337,13 @@ public class RoomStateManager {
         queue.add(item);
     }
 
+    public List<Object> getQueueSnapshot(String roomId) {
+        List<Object> queue = getQueue(roomId);
+        synchronized (queue) {
+            return new ArrayList<>(queue);
+        }
+    }
+
     public void removeFromQueue(String roomId, int index) {
         List<Object> queue = getQueue(roomId);
         synchronized (queue) {
@@ -307,6 +361,51 @@ public class RoomStateManager {
             }
         }
         return null;
+    }
+
+    public List<Map<String, Object>> getVideoHistory(String roomId) {
+        return roomVideoHistory.computeIfAbsent(
+                roomId,
+                k -> Collections.synchronizedList(new ArrayList<>())
+        );
+    }
+
+    public List<Map<String, Object>> getVideoHistorySnapshot(String roomId) {
+        List<Map<String, Object>> history = getVideoHistory(roomId);
+        synchronized (history) {
+            List<Map<String, Object>> snapshot = new ArrayList<>(history.size());
+            for (Map<String, Object> item : history) {
+                snapshot.add(new HashMap<>(item));
+            }
+            return snapshot;
+        }
+    }
+
+    public void addVideoHistory(String roomId, Map<String, Object> video) {
+        Object url = video.get("url");
+        if (url == null || String.valueOf(url).isBlank()) return;
+        List<Map<String, Object>> history = getVideoHistory(roomId);
+        synchronized (history) {
+            history.removeIf(item -> Objects.equals(String.valueOf(item.get("url")), String.valueOf(url)));
+            history.add(0, new HashMap<>(video));
+            if (history.size() > 100) history.subList(100, history.size()).clear();
+        }
+    }
+
+    public void removeVideoHistory(String roomId, String url) {
+        List<Map<String, Object>> history = roomVideoHistory.get(roomId);
+        if (history == null) return;
+        synchronized (history) {
+            history.removeIf(item -> Objects.equals(String.valueOf(item.get("url")), url));
+        }
+    }
+
+    public void clearVideoHistory(String roomId) {
+        List<Map<String, Object>> history = roomVideoHistory.get(roomId);
+        if (history == null) return;
+        synchronized (history) {
+            history.clear();
+        }
     }
 
     // ── Polls ─────────────────────────────────────────────────────────────────
@@ -440,6 +539,97 @@ public class RoomStateManager {
             list.removeIf(q -> Objects.equals(String.valueOf(q.get("id")), String.valueOf(questionId)));
         }
     }
+
+    // ── Pinned Notes ─────────────────────────────────────────────────────────────
+
+    public List<Map<String, Object>> getRoomMessages(String roomId) {
+        List<Map<String, Object>> messages = roomMessages.computeIfAbsent(
+                roomId,
+                k -> Collections.synchronizedList(new ArrayList<>())
+        );
+        synchronized (messages) {
+            return new ArrayList<>(messages);
+        }
+    }
+
+    public void addRoomMessage(String roomId, Map<String, Object> message) {
+        List<Map<String, Object>> messages = roomMessages.computeIfAbsent(
+                roomId,
+                k -> Collections.synchronizedList(new ArrayList<>())
+        );
+        synchronized (messages) {
+            messages.add(new HashMap<>(message));
+            if (messages.size() > 500) {
+                messages.subList(0, messages.size() - 500).clear();
+            }
+        }
+    }
+
+    public void updateRoomMessage(String roomId, Map<String, Object> updatedMessage) {
+        List<Map<String, Object>> messages = roomMessages.computeIfAbsent(
+                roomId,
+                k -> Collections.synchronizedList(new ArrayList<>())
+        );
+        synchronized (messages) {
+            for (int i = 0; i < messages.size(); i++) {
+                if (Objects.equals(
+                        String.valueOf(messages.get(i).get("id")),
+                        String.valueOf(updatedMessage.get("id"))
+                )) {
+                    messages.set(i, new HashMap<>(updatedMessage));
+                    return;
+                }
+            }
+        }
+    }
+
+    public void removeRoomMessage(String roomId, String messageId) {
+        List<Map<String, Object>> messages = roomMessages.get(roomId);
+        if (messages == null) return;
+        synchronized (messages) {
+            messages.removeIf(message -> Objects.equals(
+                    String.valueOf(message.get("id")),
+                    messageId
+            ));
+        }
+    }
+
+public List<Map<String, Object>> getPinnedNotes(String roomId) {
+    return roomPinnedNotes.computeIfAbsent(
+            roomId,
+            k -> Collections.synchronizedList(new ArrayList<>())
+    );
+}
+
+public void addPinnedNote(String roomId, Map<String, Object> note) {
+    List<Map<String, Object>> notes = getPinnedNotes(roomId);
+
+    synchronized (notes) {
+        notes.removeIf(existing -> Objects.equals(
+                String.valueOf(existing.get("id")),
+                String.valueOf(note.get("id"))
+        ));
+        notes.add(0, new HashMap<>(note));
+
+        // Keep maximum 100 pinned notes per room
+        if (notes.size() > 100) {
+            notes.subList(100, notes.size()).clear();
+        }
+    }
+}
+
+public void removePinnedNote(String roomId, String noteId) {
+    List<Map<String, Object>> notes = getPinnedNotes(roomId);
+
+    synchronized (notes) {
+        notes.removeIf(note ->
+                Objects.equals(
+                        String.valueOf(note.get("id")),
+                        String.valueOf(noteId)
+                )
+        );
+    }
+}
 
     // ── Shared Files ────────────────────────────────────────────────────────────
 

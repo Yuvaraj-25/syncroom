@@ -2,11 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Socket } from "socket.io-client";
-import { useRoomStore } from "@/store/useRoomStore";
+import { Message, useRoomStore } from "@/store/useRoomStore";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Send, Smile, X, Paperclip, Download, FileText, Image, Video, Music, File as FileIcon } from "lucide-react";
+import { Send, Smile, X, Paperclip, Download, FileText, Image, Video, Music, File as FileIcon, Pencil, Trash2, Check } from "lucide-react";
 
 // ── Comprehensive emoji list organised by category ──────────────────
 const EMOJI_CATEGORIES: { name: string; icon: string; emojis: string[] }[] = [
@@ -174,9 +174,12 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
-    const { messages } = useRoomStore();
+    const { messages, updateMessage, removeMessage } = useRoomStore();
     const { data: session } = useSession();
     const [text, setText] = useState("");
+    const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+    const [editText, setEditText] = useState("");
+    const [pinnedNotes, setPinnedNotes] = useState<Message[]>([]);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [activeEmojiCategory, setActiveEmojiCategory] = useState(0);
     const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
@@ -191,6 +194,24 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
     const lastTypingEmitRef = useRef(0);
     const [chatSoundEnabled, setChatSoundEnabled] = useState(true);
     const prevMessageCountRef = useRef(messages.length);
+    const currentUserId = (session?.user as { id?: string } | undefined)?.id || "anonymous";
+
+    useEffect(() => {
+        const handleMessageUpdated = (message: Message) => updateMessage(message);
+        const handleMessageDeleted = ({ messageId }: { messageId: string }) => removeMessage(messageId);
+        const handleOperationError = ({ message }: { message: string }) => {
+            window.alert(message || "The chat action could not be completed.");
+        };
+
+        socket.on("chat-message-updated", handleMessageUpdated);
+        socket.on("chat-message-deleted", handleMessageDeleted);
+        socket.on("chat-operation-error", handleOperationError);
+        return () => {
+            socket.off("chat-message-updated", handleMessageUpdated);
+            socket.off("chat-message-deleted", handleMessageDeleted);
+            socket.off("chat-operation-error", handleOperationError);
+        };
+    }, [socket, updateMessage, removeMessage]);
 
     // Request file list on mount
     useEffect(() => {
@@ -198,6 +219,21 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
         return () => {
             socket.off("file-shared");
             socket.off("files-list");
+        };
+    }, [socket, roomId]);
+
+    // Request pinned notes when entering the room
+
+    useEffect(() => {
+        const handlePinnedNotesUpdated = ({ notes }: { notes: Message[] }) => {
+            setPinnedNotes(notes || []);
+        };
+
+        socket.on("pinned-notes-updated", handlePinnedNotesUpdated);
+        socket.emit("request-pinned-notes", { roomId });
+
+        return () => {
+            socket.off("pinned-notes-updated", handlePinnedNotesUpdated);
         };
     }, [socket, roomId]);
 
@@ -331,8 +367,8 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
         if (!text.trim() || !session?.user) return;
 
         const newMessage = {
-            id: Math.random().toString(36).substring(2, 9),
-            userId: (session.user as { id?: string }).id || "anonymous",
+            id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`,
+            userId: currentUserId,
             userName: session.user.name || "Guest",
             userImage: session.user.image || "",
             text: text.trim(),
@@ -341,6 +377,22 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
 
         socket.emit("chat-message", { roomId, message: newMessage });
         setText("");
+    };
+
+    const handleEditSave = (messageId: string) => {
+        const updatedText = editText.trim();
+        if (!updatedText) {
+            window.alert("A message cannot be empty.");
+            return;
+        }
+        socket.emit("edit-chat-message", { roomId, messageId, text: updatedText });
+        setEditingMessageId(null);
+        setEditText("");
+    };
+
+    const handleDeleteMessage = (messageId: string) => {
+        if (!window.confirm("Delete this message for everyone in the room?")) return;
+        socket.emit("delete-chat-message", { roomId, messageId });
     };
 
     const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -501,37 +553,182 @@ export default function ChatPanel({ socket, roomId }: ChatPanelProps) {
                     </div>
                 ) : (
                     messages.map((m) => {
-                        const isMe = session?.user?.name === m.userName;
+                        const isMe = currentUserId === m.userId;
+                        const isEditableTextMessage = (m.type === undefined || m.type === "text") && !m.isAi;
                         return (
-                            <div key={m.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 fade-in duration-300`}>
-                                <div className="flex items-end gap-2 max-w-[85%]">
-                                    {!isMe && (
-                                        // eslint-disable-next-line @next/next/no-img-element
-                                        <img
-                                            src={m.userImage || `https://api.dicebear.com/7.x/initials/svg?seed=${m.userName}`}
-                                            alt=""
-                                            className="w-6 h-6 rounded-full shrink-0 shadow-sm"
-                                        />
-                                    )}
-                                    <div className={`rounded-2xl px-4 py-2 text-sm shadow-md backdrop-blur-md ${
-                                        isMe
-                                        ? 'bg-indigo-600/90 text-white rounded-br-sm border border-indigo-500/50'
-                                        : m.isAi
-                                            ? 'bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-zinc-200 rounded-bl-sm border border-purple-500/30'
-                                            : 'bg-zinc-800/80 text-zinc-200 rounded-bl-sm border border-zinc-700/50'
-                                        }`}>
-                                        {!isMe && <div className={`text-xs font-semibold mb-1 ${m.isAi ? 'text-purple-400' : 'text-indigo-400'}`}>{m.userName}</div>}
-                                        {renderMessageContent(m)}
-                                    </div>
-                                </div>
-                                <div className="text-[10px] text-zinc-500 mt-1 mx-8 font-mono">
-                                    {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </div>
-                            </div>
+                            <div
+    key={m.id}
+    className={`flex flex-col ${
+        isMe ? 'items-end' : 'items-start'
+    } animate-in slide-in-from-bottom-2 fade-in duration-300`}
+>
+    <div className="flex items-end gap-2 max-w-[85%]">
+        {!isMe && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+                src={
+                    m.userImage ||
+                    `https://api.dicebear.com/7.x/initials/svg?seed=${m.userName}`
+                }
+                alt=""
+                className="w-6 h-6 rounded-full shrink-0 shadow-sm"
+            />
+        )}
+
+        <div
+            className={`rounded-2xl px-4 py-2 text-sm shadow-md backdrop-blur-md ${
+                isMe
+                    ? 'bg-indigo-600/90 text-white rounded-br-sm border border-indigo-500/50'
+                    : m.isAi
+                        ? 'bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-zinc-200 rounded-bl-sm border border-purple-500/30'
+                        : 'bg-zinc-800/80 text-zinc-200 rounded-bl-sm border border-zinc-700/50'
+            }`}
+        >
+            {!isMe && (
+                <div
+                    className={`text-xs font-semibold mb-1 ${
+                        m.isAi ? 'text-purple-400' : 'text-indigo-400'
+                    }`}
+                >
+                    {m.userName}
+                </div>
+            )}
+
+            {editingMessageId === m.id ? (
+                <div className="min-w-48 space-y-2">
+                    <Input
+                        autoFocus
+                        value={editText}
+                        onChange={(event) => setEditText(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                                event.preventDefault();
+                                handleEditSave(m.id);
+                            }
+                            if (event.key === "Escape") {
+                                setEditingMessageId(null);
+                                setEditText("");
+                            }
+                        }}
+                        aria-label="Edit message"
+                    />
+                    <div className="flex justify-end gap-2">
+                        <button
+                            onClick={() => {
+                                setEditingMessageId(null);
+                                setEditText("");
+                            }}
+                            className="text-xs text-zinc-400 hover:text-white"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={() => handleEditSave(m.id)}
+                            className="inline-flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300"
+                        >
+                            <Check size={13} /> Save
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <>
+                    {renderMessageContent(m)}
+                    {m.edited && <span className="ml-1 text-[10px] text-zinc-400">(edited)</span>}
+                </>
+            )}
+
+            {editingMessageId !== m.id && (
+                <div className="mt-1 flex items-center gap-3">
+                    <button
+                        onClick={() => {
+                            socket.emit("pin-message", {
+                                roomId,
+                                message: m,
+                            });
+                        }}
+                        className="text-xs text-zinc-400 hover:text-yellow-400 transition-colors"
+                        title="Pin this message"
+                    >
+                        📌 Pin
+                    </button>
+                {isMe && isEditableTextMessage && editingMessageId !== m.id && (
+                    <>
+                        <button
+                            onClick={() => {
+                                setEditingMessageId(m.id);
+                                setEditText(m.text);
+                            }}
+                            className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-indigo-300"
+                            title="Edit message"
+                        >
+                            <Pencil size={12} /> Edit
+                        </button>
+                        <button
+                            onClick={() => handleDeleteMessage(m.id)}
+                            className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-red-400"
+                            title="Delete message"
+                        >
+                            <Trash2 size={12} /> Delete
+                        </button>
+                    </>
+                )}
+                </div>
+            )}
+        </div>
+    </div>
+
+    <div className="text-[10px] text-zinc-500 mt-1 mx-8 font-mono">
+        {new Date(m.timestamp).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit'
+        })}
+    </div>
+</div>
                         );
                     })
                 )}
             </div>
+
+{/* Pinned Notes */}
+{pinnedNotes.length > 0 && (
+    <div className="px-3 py-2 border-t border-zinc-800/50 bg-zinc-900/50">
+        <div className="text-xs font-semibold text-yellow-400 mb-2">
+            📌 Pinned Notes
+        </div>
+
+        <div className="space-y-2 max-h-32 overflow-y-auto">
+            {pinnedNotes.map((note) => (
+                <div
+                    key={note.id}
+                    className="flex items-start justify-between gap-2 p-2 rounded-lg bg-zinc-800/70 border border-zinc-700/50"
+                >
+                    <div className="min-w-0">
+                        <div className="text-xs text-indigo-400 font-medium">
+                            {note.userName}
+                        </div>
+
+                        <div className="text-sm text-zinc-200 break-words">
+                            {note.text}
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={() => {
+                            socket.emit("unpin-message", {
+                                roomId,
+                                noteId: note.id,
+                            });
+                        }}
+                        className="text-xs text-zinc-500 hover:text-red-400 shrink-0"
+                        title="Unpin"
+                    >
+                        ✕
+                    </button>
+                </div>
+            ))}
+        </div>
+    </div>
+)}
 
             {/* Input Area */}
             <div className="p-3 border-t border-zinc-800/50 relative">

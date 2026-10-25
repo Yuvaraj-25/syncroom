@@ -36,7 +36,7 @@ interface QueuePanelProps {
 }
 
 export default function QueuePanel({ socket, roomId, onClose, onActiveTabChange }: QueuePanelProps) {
-    const { videoQueue, users } = useRoomStore();
+    const { videoQueue, videoHistory, users } = useRoomStore();
     const { youtubeApiKey, setYoutubeApiKey } = useSettingsStore();
 
     const [inputUrl, setInputUrl] = useState("");
@@ -122,6 +122,21 @@ export default function QueuePanel({ socket, roomId, onClose, onActiveTabChange 
             socket.emit("video-url-change", { roomId, newUrl: url });
             socket.emit("remove-from-queue", { roomId, index });
         }
+    };
+
+    const handlePlayHistoryItem = (url: string) => {
+        if (!isOwner) return;
+        socket.emit("video-url-change", { roomId, newUrl: url });
+    };
+
+    const handleRemoveHistoryItem = (url: string) => {
+        if (!isOwner) return;
+        socket.emit("remove-video-history", { roomId, url });
+    };
+
+    const handleClearVideoHistory = () => {
+        if (!isOwner || !window.confirm("Clear all recently played videos for this room?")) return;
+        socket.emit("clear-video-history", { roomId });
     };
 
     const handleRemoveFromQueue = (index: number) => {
@@ -480,15 +495,21 @@ export default function QueuePanel({ socket, roomId, onClose, onActiveTabChange 
                     )
                 ) : (
                     /* Link / Queue Tab list */
-                    videoQueue.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center text-zinc-500">
-                            <ListVideo size={36} className="opacity-10 mb-2.5" />
-                            <p className="text-xs font-medium text-zinc-400">The queue is currently empty.</p>
-                            <p className="text-[10px] text-zinc-650 mt-1 max-w-[200px]">Paste a YouTube link above to share a video with everyone!</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            {videoQueue.map((item, idx) => {
+                    <div className="space-y-5 pb-4">
+                        <section>
+                            <div className="mb-3 flex items-center justify-between">
+                                <h4 className="text-[10px] uppercase font-bold tracking-wider text-indigo-300">Up Next</h4>
+                                <span className="text-[10px] text-zinc-500">{videoQueue.length} videos</span>
+                            </div>
+                            {videoQueue.length === 0 ? (
+                                <div className="flex flex-col items-center py-8 text-center text-zinc-500">
+                                    <ListVideo size={30} className="opacity-10 mb-2" />
+                                    <p className="text-xs font-medium text-zinc-400">The queue is currently empty.</p>
+                                    <p className="text-[10px] text-zinc-600 mt-1 max-w-[200px]">Paste a YouTube link above to add a video.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {videoQueue.map((item, idx) => {
                                 const isObj = typeof item !== "string";
                                 const title = isObj ? item.title : "YouTube Video";
                                 const url = isObj ? item.url : item;
@@ -562,9 +583,83 @@ export default function QueuePanel({ socket, roomId, onClose, onActiveTabChange 
                                         </div>
                                     </div>
                                 );
-                            })}
-                        </div>
-                    )
+                                    })}
+                                </div>
+                            )}
+                        </section>
+
+                        <section className="border-t border-zinc-800/60 pt-4">
+                            <div className="mb-3 flex items-center justify-between">
+                                <h4 className="text-[10px] uppercase font-bold tracking-wider text-zinc-400">Recently played</h4>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-zinc-500">{videoHistory.length} videos</span>
+                                    {isOwner && videoHistory.length > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={handleClearVideoHistory}
+                                            className="text-[10px] text-zinc-500 hover:text-red-400"
+                                            title="Clear all recently played videos"
+                                        >
+                                            Clear history
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            {videoHistory.length === 0 ? (
+                                <p className="py-4 text-center text-[10px] text-zinc-600">Played videos will appear here so you can watch them again.</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {videoHistory.map((item, index) => {
+                                        const videoId = extractYouTubeId(item.url);
+                                        const thumbnail = item.thumbnail || (videoId ? `https://img.youtube.com/vi/${videoId}/mqdefault.jpg` : "");
+                                        return (
+                                            <div key={`${item.url}-${index}`} className="flex items-center gap-2 rounded-xl border border-zinc-800/70 bg-zinc-900/40 p-2">
+                                                {isOwner && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handlePlayHistoryItem(item.url)}
+                                                        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg p-0.5 text-left hover:bg-zinc-800/60"
+                                                        title="Play this video again"
+                                                    >
+                                                        <div className="relative h-10 w-16 shrink-0 overflow-hidden rounded-md bg-black">
+                                                            {thumbnail && <img src={thumbnail} alt="" className="h-full w-full object-cover" />}
+                                                            <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition-opacity hover:bg-black/35 hover:opacity-100">
+                                                                <Play size={14} fill="currentColor" />
+                                                            </span>
+                                                        </div>
+                                                        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-300">
+                                                            {item.title || "YouTube Video"}
+                                                        </span>
+                                                    </button>
+                                                )}
+                                                {!isOwner && (
+                                                    <>
+                                                        <div className="h-10 w-16 shrink-0 overflow-hidden rounded-md bg-black">
+                                                            {thumbnail && <img src={thumbnail} alt="" className="h-full w-full object-cover" />}
+                                                        </div>
+                                                        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-300">
+                                                            {item.title || "YouTube Video"}
+                                                        </span>
+                                                    </>
+                                                )}
+                                                {isOwner && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRemoveHistoryItem(item.url)}
+                                                        className="shrink-0 rounded-lg p-1.5 text-zinc-500 hover:bg-red-500/10 hover:text-red-400"
+                                                        title="Remove from recently played"
+                                                        aria-label={`Remove ${item.title || "video"} from recently played`}
+                                                    >
+                                                        <Trash2 size={13} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </section>
+                    </div>
                 )}
             </ScrollArea>
         </div>

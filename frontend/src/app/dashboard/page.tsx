@@ -11,10 +11,12 @@ import {
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { motion } from "framer-motion";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Dashboard() {
     const { data: session, status } = useSession();
     const router = useRouter();
+    const { toast } = useToast();
     
     // Core state management
     const [recentRooms, setRecentRooms] = useState<{roomId: string, joinedAt: string}[]>([]);
@@ -59,12 +61,45 @@ export default function Dashboard() {
     }, [status, session]);
 
     // Command Handlers
-    const handleCreateRoom = useCallback(() => {
+    const handleCreateRoom = useCallback(async () => {
         if (isNavigating) return;
         setIsNavigating(true);
         const newRoomId = Math.random().toString(36).substring(2, 9).toUpperCase();
-        router.push(`/room/${newRoomId}`);
-    }, [isNavigating, router]);
+        const ownerId = (session?.user as { id?: string } | undefined)?.id;
+
+        if (!ownerId) {
+            setIsNavigating(false);
+            toast({
+                title: "Couldn't create room",
+                description: "Your account ID is missing. Please sign in again.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        try {
+            const apiUrl = process.env.NEXT_PUBLIC_SOCKET_URL?.replace(/\/$/, "") || "http://localhost:4000";
+            const response = await fetch(`${apiUrl}/api/rooms/create`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ roomId: newRoomId, ownerId, isPrivate: false }),
+            });
+
+            if (!response.ok) {
+                throw new Error("The server couldn't save the new room.");
+            }
+
+            router.push(`/room/${newRoomId}`);
+        } catch (error) {
+            console.error("Failed to create room:", error);
+            setIsNavigating(false);
+            toast({
+                title: "Couldn't create room",
+                description: error instanceof Error ? error.message : "Please try again.",
+                variant: "destructive",
+            });
+        }
+    }, [isNavigating, router, session, toast]);
 
     const handleJoinRoomId = useCallback((id: string) => {
         if (isNavigating) return;

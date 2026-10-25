@@ -6,8 +6,9 @@ import { useSession, signOut } from "next-auth/react";
 import { io, Socket } from "socket.io-client";
 import { useRoomStore } from "@/store/useRoomStore";
 import { Button } from "@/components/ui/button";
-import { LogOut, Mic, MicOff, Video, VideoOff, MonitorUp, Users as UsersIcon, MessageSquare, Copy, Check, Play, Share2, Link2, WifiOff, Settings, Hand, Vote, ListVideo } from "lucide-react";
+import { LogOut, Mic, MicOff, Video, VideoOff, MonitorUp, Users as UsersIcon, MessageSquare, Copy, Check, Play, Share2, Link2, WifiOff, Settings, Hand, Vote, ListVideo, BookOpen, Trash2 } from "lucide-react";
 import EmojiReactions from "@/components/EmojiReactions";
+import StudyRoomPanel from "@/components/StudyRoomPanel";
 import {
     Dialog,
     DialogContent,
@@ -54,13 +55,20 @@ export default function RoomPage() {
     const [isDisconnected, setIsDisconnected] = useState(false);
 
     // UI Toggles
-    const [showSidebar, setShowSidebar] = useState<"chat" | "participants" | "polls" | "queue" | null>("chat");
+    const [showSidebar, setShowSidebar] = useState<
+    "chat" | "participants" | "polls" | "queue" | "study" | null
+>("chat");
     const [queueTab, setQueueTab] = useState<"link" | "search">("link");
 
-    const { users, setUsers, addUser, removeUser, addMessage, updateUser, setVideoQueue, setPolls, setQuestions } = useRoomStore();
+    const { users, setUsers, addUser, removeUser, addMessage, setMessages, updateUser, setVideoQueue, setVideoHistory, setPolls, setQuestions, resetRoom } = useRoomStore();
     const { shortcuts } = useSettingsStore();
 
+    useEffect(() => {
+        resetRoom();
+    }, [roomId, resetRoom]);
+
     const isOwner = users.find(u => u.id === socket?.id)?.isOwner ?? false;
+    const isRoomCreator = users.find(u => u.id === socket?.id)?.isCreator ?? false;
 
     // Refs to hold the latest toggle state so the WebRTC hook's recovery
     // handler can read them without creating new listener registrations.
@@ -71,7 +79,7 @@ export default function RoomPage() {
 
     // Start WebRTC connection — pass state refs so recovery restores correct state
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { localStream, toggleScreenShare, ensureVideoTrack } = useWebRTC(
+    const { localStream, toggleScreenShare, ensureAudioTrack, ensureVideoTrack, disableVideoTrack } = useWebRTC(
         roomId as string, socketId, isMutedRef, isVideoOnRef
     );
 
@@ -90,7 +98,7 @@ export default function RoomPage() {
     // ── Set initial store state when we have a socket ID ──
     useEffect(() => {
         if (socketId) {
-            updateUser(socketId, { isMuted: true, isVideoOn: false });
+            updateUser(socketId, { isMuted: isMutedRef.current, isVideoOn: isVideoOnRef.current });
         }
     }, [socketId, updateUser]);
 
@@ -109,6 +117,7 @@ export default function RoomPage() {
             const finalImage = session.user?.image || "";
 
             const newSocket = io(SOCKET_URL, {
+                transports: ["websocket"],
                 withCredentials: true,
                 reconnection: true,
                 reconnectionAttempts: Infinity,
@@ -124,10 +133,11 @@ export default function RoomPage() {
                     newSocket.emit("join-room", {
                         roomId,
                         user: {
+                            userId: (session.user as { id?: string }).id || "anonymous",
                             name: finalName,
                             image: finalImage,
-                            isMuted: true,
-                            isVideoOn: false,
+                            isMuted: isMutedRef.current,
+                            isVideoOn: isVideoOnRef.current,
                         }
                     });
 
@@ -165,8 +175,25 @@ export default function RoomPage() {
                 }
             });
 
+            newSocket.on("room-closed", () => {
+                toast({
+                    title: "Room deleted",
+                    description: "The creator closed this room, so it can no longer be joined.",
+                });
+                newSocket.disconnect();
+                router.push("/dashboard");
+            });
+
+            newSocket.on("room-delete-error", ({ message }: { message: string }) => {
+                toast({ title: "Could not delete room", description: message, variant: "destructive" });
+            });
+
             newSocket.on("chat-message", (message) => {
                 addMessage(message);
+            });
+
+            newSocket.on("chat-history", ({ messages }: { messages: Parameters<typeof setMessages>[0] }) => {
+                setMessages(messages);
             });
 
             // Room name changes
@@ -175,8 +202,12 @@ export default function RoomPage() {
             });
 
             // Video Queue sync
-            newSocket.on("queue-updated", ({ queue }: { queue: string[] }) => {
+            newSocket.on("queue-updated", ({ queue }: { queue: (string | import("@/store/useRoomStore").VideoInfo)[] }) => {
                 setVideoQueue(queue);
+            });
+
+            newSocket.on("video-history-updated", ({ history }: { history: import("@/store/useRoomStore").VideoInfo[] }) => {
+                setVideoHistory(history);
             });
 
             // Collaborative Polls & Q&A
@@ -202,11 +233,13 @@ export default function RoomPage() {
 
             // Host Controls
             newSocket.on("force-mute", () => {
+                isMutedRef.current = true;
                 setIsMuted(true);
                 if (localStreamRef.current) {
                     localStreamRef.current.getAudioTracks().forEach(track => track.enabled = false);
                 }
                 newSocket.emit("toggle-mic", { roomId, userId: newSocket.id, isMuted: true });
+                if (newSocket.id) updateUser(newSocket.id, { isMuted: true });
             });
 
             newSocket.on("hand-toggled", ({ userId, isHandRaised }: { userId: string, isHandRaised: boolean }) => {
@@ -223,21 +256,6 @@ export default function RoomPage() {
                 // Socket disconnects are normal during tab switches;
                 // the "Connection Lost" overlay is driven by navigator.onLine
                 // (see the useEffect below), NOT by socket events.
-            });
-
-            newSocket.on("reconnect", () => {
-                // Re-join room after reconnect
-                if (newSocket.id) {
-                    newSocket.emit("join-room", {
-                        roomId,
-                        user: {
-                            name: finalName,
-                            image: finalImage,
-                            isMuted: isMutedRef.current,
-                            isVideoOn: isVideoOnRef.current,
-                        }
-                    });
-                }
             });
 
             // Sync remote users' camera and mic state changes
@@ -257,19 +275,6 @@ export default function RoomPage() {
             newSocket.on("kicked", () => {
                 alert("You have been kicked from the room by the owner.");
                 router.push("/dashboard");
-            });
-
-            newSocket.on("force-mute", () => {
-                setIsMuted(true);
-                if (localStream) {
-                    localStream.getAudioTracks().forEach(track => track.enabled = false);
-                }
-                if (newSocket.id) updateUser(newSocket.id, { isMuted: true });
-                toast({
-                    title: "Force Muted",
-                    description: "The room owner has muted your microphone.",
-                    variant: "destructive",
-                });
             });
 
             newSocket.on("owner-status-update", ({ socketId, isOwner, isPrimaryOwner }: { socketId: string, isOwner: boolean, isPrimaryOwner: boolean }) => {
@@ -324,18 +329,33 @@ export default function RoomPage() {
     }, []);
 
     // ── Stabilized toggle handlers (no re-creation on each render) ──────
-    const toggleMic = useCallback(() => {
-        if (localStream) {
-            const newMuted = !isMutedRef.current;
-            localStream.getAudioTracks().forEach(track => track.enabled = !newMuted);
-            setIsMuted(newMuted);
-            if (socketId) updateUser(socketId, { isMuted: newMuted });
-            if (socket) socket.emit("toggle-mic", { roomId, userId: socketId, isMuted: newMuted });
+    const toggleMic = useCallback(async () => {
+        const newMuted = !isMutedRef.current;
+
+        if (newMuted) {
+            localStream?.getAudioTracks().forEach(track => { track.enabled = false; });
+        } else {
+            let track = localStreamRef.current?.getAudioTracks().find(audioTrack => audioTrack.readyState === "live");
+            if (!track) {
+                track = await ensureAudioTrack() ?? undefined;
+            }
+            if (!track) {
+                toast({
+                    title: "Microphone unavailable",
+                    description: "Allow microphone access in your browser, then try again.",
+                    variant: "destructive",
+                });
+                return;
+            }
+            track.enabled = true;
         }
-    }, [localStream, socketId, socket, roomId, updateUser]);
+        isMutedRef.current = newMuted;
+        setIsMuted(newMuted);
+        if (socketId) updateUser(socketId, { isMuted: newMuted });
+        if (socket) socket.emit("toggle-mic", { roomId, userId: socketId, isMuted: newMuted });
+    }, [localStream, socketId, socket, roomId, updateUser, ensureAudioTrack, toast]);
 
     const toggleCamera = useCallback(async () => {
-        if (!localStream) return;
         if (isTogglingCamera.current) return;
         isTogglingCamera.current = true;
 
@@ -343,31 +363,45 @@ export default function RoomPage() {
             const newVideoOn = !isVideoOnRef.current;
 
             if (newVideoOn) {
-                // Try to use existing track first (fast path)
-                let track: MediaStreamTrack | null | undefined = localStream.getVideoTracks()[0];
+                let track: MediaStreamTrack | null | undefined = localStreamRef.current?.getVideoTracks().find(videoTrack => videoTrack.readyState === "live");
                 if (track && track.readyState === "live") {
                     track.enabled = true;
                 } else {
-                    // Track is dead/missing — re-acquire (slow path)
                     track = await ensureVideoTrack();
                     if (track) {
                         track.enabled = true;
                     } else {
-                        console.warn("Could not enable camera — no video track available");
+                        toast({
+                            title: "Camera unavailable",
+                            description: "Allow camera access in your browser, then try again.",
+                            variant: "destructive",
+                        });
                         return;
                     }
                 }
             } else {
-                localStream.getVideoTracks().forEach(track => track.enabled = false);
+                isVideoOnRef.current = false;
+                try {
+                    await disableVideoTrack();
+                } catch (error) {
+                    console.error("Could not turn off camera:", error);
+                    toast({
+                        title: "Could not turn off camera",
+                        description: "Check your camera settings and try again.",
+                        variant: "destructive",
+                    });
+                    return;
+                }
             }
 
+            isVideoOnRef.current = newVideoOn;
             setIsVideoOn(newVideoOn);
             if (socketId) updateUser(socketId, { isVideoOn: newVideoOn });
             if (socket) socket.emit("toggle-camera", { roomId, userId: socketId, isVideoOn: newVideoOn });
         } finally {
             isTogglingCamera.current = false;
         }
-    }, [localStream, socketId, socket, roomId, updateUser, ensureVideoTrack]);
+    }, [socketId, socket, roomId, updateUser, ensureVideoTrack, disableVideoTrack, toast]);
 
     const toggleHand = useCallback(() => {
         setIsHandRaised(prev => {
@@ -507,7 +541,40 @@ export default function RoomPage() {
                             <ListVideo size={16} />
                             <span className="hidden sm:inline text-xs">Up Next</span>
                         </Button>
+
+                        <Button
+    variant="ghost"
+    size="sm"
+    className={`h-9 px-3 gap-1.5 rounded-lg transition-all ${
+        showSidebar === "study"
+            ? "bg-indigo-500/10 text-indigo-400"
+            : "text-zinc-400 hover:text-white hover:bg-zinc-800/50"
+    }`}
+    onClick={() =>
+        setShowSidebar(showSidebar === "study" ? null : "study")
+    }
+>
+    <BookOpen size={16} />
+    <span className="hidden sm:inline text-xs">Study Room</span>
+</Button>
+
                         {isOwner && <HostControls socket={socket} roomId={roomId as string} />}
+                        {isRoomCreator && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                    if (window.confirm("Delete this room for everyone? No one will be able to rejoin, and its chat, pinned notes, and saved video list will be deleted.")) {
+                                        socket?.emit("delete-room", { roomId });
+                                    }
+                                }}
+                                className="h-9 px-3 gap-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all"
+                                title="Delete this room for everyone"
+                            >
+                                <Trash2 size={16} />
+                                <span className="hidden sm:inline text-xs">Delete Room</span>
+                            </Button>
+                        )}
                         <Button
                             variant="ghost"
                             size="sm"
@@ -695,7 +762,10 @@ export default function RoomPage() {
                             <ParticipantsPanel socket={socket} roomId={roomId as string} />
                         ) : showSidebar === "polls" ? (
                             <PollsPanel socket={socket} roomId={roomId as string} />
-                        ) : (
+                        ) : showSidebar === "study" ? (
+    <StudyRoomPanel socket={socket} roomId={roomId as string} />
+) : (
+
                             <QueuePanel 
                                 socket={socket} 
                                 roomId={roomId as string} 

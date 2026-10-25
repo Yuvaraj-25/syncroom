@@ -9,7 +9,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.Instant;
 
 @Entity
-@Table(name = "messages")
+@Table(name = "messages", indexes = @Index(name = "idx_messages_room_client_id", columnList = "room_id,client_message_id"))
 @EntityListeners(AuditingEntityListener.class)
 public class Message {
 
@@ -32,6 +32,12 @@ public class Message {
 
     @Column(name = "user_image", columnDefinition = "TEXT")
     private String userImage;
+
+    @Column(name = "payload", columnDefinition = "TEXT")
+    private String payload;
+
+    @Column(name = "client_message_id")
+    private String clientMessageId;
 
     @CreatedDate
     @Column(name = "created_at", updatable = false, columnDefinition = "TIMESTAMP")
@@ -98,6 +104,22 @@ public class Message {
 
     public void setUserImage(String userImage) {
         this.userImage = userImage;
+    }
+
+    public String getPayload() {
+        return payload;
+    }
+
+    public void setPayload(String payload) {
+        this.payload = payload;
+    }
+
+    public String getClientMessageId() {
+        return clientMessageId;
+    }
+
+    public void setClientMessageId(String clientMessageId) {
+        this.clientMessageId = clientMessageId;
     }
 
     public Instant getCreatedAt() {

@@ -58,6 +58,79 @@ public class RoomStateManagerTest {
     }
 
     @Test
+    void playingWithoutSelectedVideoUsesDefaultVideo() {
+        roomStateManager.updateVideoPlay("empty-video-room", 0.0);
+
+        assertNotNull(roomStateManager.getVideoState("empty-video-room"));
+        assertEquals("aqz-KE-bpKQ", roomStateManager.getVideoState("empty-video-room").getUrl());
+    }
+
+    @Test
+    void mediaQueueAndHistoryRemainAfterLastParticipantLeaves() {
+        String roomId = "persistent-media-room";
+        roomStateManager.joinRoom(roomId, "socket-1", Map.of("name", "Alice"));
+        roomStateManager.updateVideoUrl(roomId, "https://www.youtube.com/watch?v=video12345");
+        roomStateManager.addToQueue(roomId, Map.of(
+                "url", "https://www.youtube.com/watch?v=video67890",
+                "title", "Next video"
+        ));
+        roomStateManager.addVideoHistory(roomId, Map.of(
+                "url", "https://www.youtube.com/watch?v=video00000",
+                "title", "Previous video"
+        ));
+
+        roomStateManager.removeUserFromAllRooms("socket-1");
+
+        assertEquals("https://www.youtube.com/watch?v=video12345",
+                roomStateManager.getVideoState(roomId).getUrl());
+        assertEquals(1, roomStateManager.getQueueSnapshot(roomId).size());
+        assertEquals("https://www.youtube.com/watch?v=video00000",
+                roomStateManager.getVideoHistorySnapshot(roomId).get(0).get("url"));
+    }
+
+    @Test
+    void chatHistoryRemainsAvailableAfterLastParticipantLeaves() {
+        String roomId = "persistent-chat-room";
+        roomStateManager.joinRoom(roomId, "socket-1", Map.of("name", "Alice"));
+        roomStateManager.addRoomMessage(roomId, Map.of(
+                "id", "message-1",
+                "userName", "Alice",
+                "text", "Hello"
+        ));
+
+        roomStateManager.removeUserFromAllRooms("socket-1");
+
+        List<Map<String, Object>> history = roomStateManager.getRoomMessages(roomId);
+        assertEquals(1, history.size());
+        assertEquals("Hello", history.get(0).get("text"));
+    }
+
+    @Test
+    void removeVideoHistoryDeletesOnlyMatchingVideo() {
+        String roomId = "video-history-room";
+        roomStateManager.addVideoHistory(roomId, Map.of("url", "video-a", "title", "A"));
+        roomStateManager.addVideoHistory(roomId, Map.of("url", "video-b", "title", "B"));
+
+        roomStateManager.removeVideoHistory(roomId, "video-a");
+
+        List<Map<String, Object>> history = roomStateManager.getVideoHistorySnapshot(roomId);
+        assertEquals(1, history.size());
+        assertEquals("video-b", history.get(0).get("url"));
+    }
+
+    @Test
+    void clearVideoHistoryRemovesAllHistoryWithoutRemovingQueue() {
+        String roomId = "clear-video-history-room";
+        roomStateManager.addVideoHistory(roomId, Map.of("url", "video-a", "title", "A"));
+        roomStateManager.getQueue(roomId).add("video-next");
+
+        roomStateManager.clearVideoHistory(roomId);
+
+        assertTrue(roomStateManager.getVideoHistorySnapshot(roomId).isEmpty());
+        assertEquals(List.of("video-next"), roomStateManager.getQueueSnapshot(roomId));
+    }
+
+    @Test
     void testWhiteboardStrokes() {
         String roomId = "wb-room";
         Map<String, Object> stroke1 = Map.of("x0", 10, "y0", 20, "x1", 30, "y1", 40, "color", "#fff", "width", 2);
@@ -138,5 +211,23 @@ public class RoomStateManagerTest {
         assertEquals(roomId, result.getRoomId());
         assertEquals("socket-guest", result.getNewPrimarySocketId());
         assertTrue(roomStateManager.isUserPrimaryOwner(roomId, "socket-guest"));
+    }
+
+    @Test
+    void closingRoomRemovesAllLiveRoomStateAndReturnsConnectedSockets() {
+        String roomId = "closed-room";
+        roomStateManager.joinRoom(roomId, "socket-host", Map.of("name", "Host"));
+        roomStateManager.addToQueue(roomId, "next-video");
+        roomStateManager.addVideoHistory(roomId, Map.of("url", "old-video"));
+        roomStateManager.addRoomMessage(roomId, Map.of("id", "message-1"));
+
+        assertEquals(java.util.Set.of("socket-host"), roomStateManager.closeRoom(roomId));
+
+        assertTrue(roomStateManager.getUsersInRoom(roomId).isEmpty());
+        assertNull(roomStateManager.getRoomName(roomId));
+        assertNull(roomStateManager.getVideoState(roomId));
+        assertTrue(roomStateManager.getQueueSnapshot(roomId).isEmpty());
+        assertTrue(roomStateManager.getVideoHistorySnapshot(roomId).isEmpty());
+        assertTrue(roomStateManager.getRoomMessages(roomId).isEmpty());
     }
 }
