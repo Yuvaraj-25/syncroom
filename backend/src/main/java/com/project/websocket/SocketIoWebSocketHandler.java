@@ -177,6 +177,7 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
             case "webrtc-offer" -> handleWebRtcSignaling("webrtc-offer", socketId, dataMap);
             case "webrtc-answer" -> handleWebRtcSignaling("webrtc-answer", socketId, dataMap);
             case "webrtc-ice-candidate" -> handleWebRtcSignaling("webrtc-ice-candidate", socketId, dataMap);
+            case "webrtc-renegotiate" -> handleWebRtcSignaling("webrtc-renegotiate", socketId, dataMap);
             case "create-poll" -> handleCreatePoll(roomId, dataMap);
             case "vote-poll" -> handleVotePoll(roomId, dataMap);
             case "close-poll" -> handleClosePoll(roomId, dataMap);
@@ -205,6 +206,11 @@ public class SocketIoWebSocketHandler extends TextWebSocketHandler {
 
         Map<String, Object> enhancedUser;
         synchronized (roomLifecycleLock) {
+            if (roomId.equals(socketToRoom.get(socketId))) {
+                emitToSocket(socketId, "room-users", roomStateManager.getUsersInRoom(roomId));
+                return;
+            }
+
             if (!roomService.prepareRoomForJoin(roomId, ownerId)) {
                 emitToSocket(socketId, "room-closed", Map.of("roomId", roomId));
                 try {

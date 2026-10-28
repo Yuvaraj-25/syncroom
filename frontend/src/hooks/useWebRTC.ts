@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Peer, { MediaConnection } from "peerjs";
+import { Socket } from "socket.io-client";
 import { useRoomStore } from "@/store/useRoomStore";
 
 /**
@@ -16,8 +17,10 @@ export function useWebRTC(
     userId: string,
     isMutedRef?: React.MutableRefObject<boolean>,
     isVideoOnRef?: React.MutableRefObject<boolean>,
+    socket?: Socket | null,
 ) {
     const [peer, setPeer] = useState<Peer | null>(null);
+    const [peerReady, setPeerReady] = useState(false);
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [remoteStreams, setRemoteStreams] = useState<{ [id: string]: MediaStream }>({});
@@ -44,6 +47,69 @@ export function useWebRTC(
             updateUser(userId, { stream: localStream });
         }
     }, [localStream, userId, updateUser]);
+
+    const registerCall = useCallback((call: MediaConnection) => {
+        callsRef.current[call.peer] = call;
+        call.on("stream", (remoteStream: MediaStream) => {
+            if (callsRef.current[call.peer] !== call) return;
+            setRemoteStreams((prev) => ({ ...prev, [call.peer]: remoteStream }));
+            updateUser(call.peer, { stream: remoteStream });
+        });
+        call.on("error", (err) => {
+            console.error(`[useWebRTC] Call error with ${call.peer}:`, err);
+        });
+        call.on("close", () => {
+            if (callsRef.current[call.peer] !== call) return;
+            delete callsRef.current[call.peer];
+            setRemoteStreams((prev) => {
+                const next = { ...prev };
+                delete next[call.peer];
+                return next;
+            });
+            updateUser(call.peer, { stream: undefined });
+        });
+    }, [updateUser]);
+
+    const startCall = useCallback((targetId: string) => {
+        if (!peer || !peerReady || !localStreamRef.current || targetId === userIdRef.current) return;
+
+        const previousCall = callsRef.current[targetId];
+        try {
+            const call = peer.call(targetId, localStreamRef.current);
+            if (!call) return;
+            registerCall(call);
+            previousCall?.close();
+        } catch (error) {
+            console.error(`[useWebRTC] Could not start media call with ${targetId}:`, error);
+        }
+    }, [peer, peerReady, registerCall]);
+
+    const refreshMediaConnections = useCallback(() => {
+        if (!userId || !socket) return;
+
+        users.forEach((user) => {
+            if (user.id === userId) return;
+            if (userId.localeCompare(user.id) < 0) {
+                startCall(user.id);
+            } else {
+                socket.emit("webrtc-renegotiate", { to: user.id });
+            }
+        });
+    }, [socket, startCall, userId, users]);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleRenegotiate = ({ from }: { from: string }) => {
+            if (from && userId.localeCompare(from) < 0) {
+                startCall(from);
+            }
+        };
+        socket.on("webrtc-renegotiate", handleRenegotiate);
+        return () => {
+            socket.off("webrtc-renegotiate", handleRenegotiate);
+        };
+    }, [socket, startCall, userId]);
 
     // ── Hot-swap helpers ────────────────────────────────────────────────
 
@@ -240,6 +306,7 @@ export function useWebRTC(
         const pendingCalls: MediaConnection[] = [];
         callsRef.current = {};
         localStreamRef.current = null;
+        setPeerReady(false);
         setLocalStream(null);
         setRemoteStreams({});
 
@@ -263,34 +330,10 @@ export function useWebRTC(
 
         setPeer(newPeer);
 
-        const registerCall = (call: MediaConnection) => {
-            callsRef.current[call.peer] = call;
-            call.on("stream", (remoteStream: MediaStream) => {
-                setRemoteStreams((prev) => ({ ...prev, [call.peer]: remoteStream }));
-                updateUser(call.peer, { stream: remoteStream });
-            });
-            call.on("error", (err) => {
-                console.error(`[useWebRTC] Call error with ${call.peer}:`, err);
-            });
-            call.on("close", () => {
-                if (callsRef.current[call.peer] === call) {
-                    delete callsRef.current[call.peer];
-                }
-                setRemoteStreams((prev) => {
-                    const next = { ...prev };
-                    delete next[call.peer];
-                    return next;
-                });
-                updateUser(call.peer, { stream: undefined });
-            });
-        };
-
         const handleIncomingCall = (call: MediaConnection) => {
-            if (callsRef.current[call.peer]) {
-                call.close();
-                return;
-            }
+            const existingCall = callsRef.current[call.peer];
             registerCall(call);
+            existingCall?.close();
             if (pendingStream) {
                 call.answer(pendingStream);
             } else {
@@ -302,11 +345,13 @@ export function useWebRTC(
         // PeerJS connection events
         newPeer.on("open", (id) => {
             console.log(`[useWebRTC] PeerJS connected with ID: ${id}`);
+            setPeerReady(true);
         });
         newPeer.on("error", (err) => {
             console.error("[useWebRTC] PeerJS error:", err);
         });
         newPeer.on("disconnected", () => {
+            setPeerReady(false);
             console.warn("[useWebRTC] PeerJS disconnected, attempting reconnect...");
             newPeer.reconnect();
         });
@@ -354,7 +399,9 @@ export function useWebRTC(
 
         return () => {
             disposed = true;
+            setPeerReady(false);
             newPeer.off("call", handleIncomingCall);
+            Object.values(callsRef.current).forEach((call) => call.close());
             newPeer.destroy();
             pendingStream?.getTracks().forEach((track) => track.stop());
             if (localStreamRef.current === pendingStream) {
@@ -366,37 +413,18 @@ export function useWebRTC(
             setLocalStream((currentStream) => currentStream === pendingStream ? null : currentStream);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [userId, roomId]);
+    }, [userId, roomId, registerCall]);
 
     // Call new users when they join
     useEffect(() => {
-        if (!peer || !localStream) return;
+        if (!peer || !peerReady || !localStream) return;
 
         users.forEach((user) => {
             if (user.id !== userId && userId.localeCompare(user.id) < 0 && !callsRef.current[user.id]) {
-                const call = peer.call(user.id, localStream);
-                if (call) {
-                    callsRef.current[user.id] = call;
-                    call.on("stream", (remoteStream: MediaStream) => {
-                        setRemoteStreams((prev) => ({ ...prev, [user.id]: remoteStream }));
-                        updateUser(user.id, { stream: remoteStream });
-                    });
-                    call.on("error", (err) => {
-                        console.error(`[useWebRTC] Call error with ${user.id}:`, err);
-                    });
-                    call.on("close", () => {
-                        if (callsRef.current[user.id] === call) delete callsRef.current[user.id];
-                        setRemoteStreams((prev) => {
-                            const next = { ...prev };
-                            delete next[user.id];
-                            return next;
-                        });
-                        updateUser(user.id, { stream: undefined });
-                    });
-                }
+                startCall(user.id);
             }
         });
-    }, [users, peer, localStream, userId, updateUser]);
+    }, [users, peer, peerReady, localStream, userId, startCall]);
 
     const toggleScreenShare = async (isSharing: boolean, onStop?: () => void) => {
         const stream = localStreamRef.current;
@@ -467,5 +495,5 @@ export function useWebRTC(
         }
     };
 
-    return { localStream, remoteStreams, toggleScreenShare, ensureAudioTrack, ensureVideoTrack, disableVideoTrack, recoverMedia };
+    return { localStream, remoteStreams, toggleScreenShare, ensureAudioTrack, ensureVideoTrack, disableVideoTrack, recoverMedia, refreshMediaConnections };
 }
