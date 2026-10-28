@@ -92,8 +92,29 @@ export const useRoomStore = create<RoomState>((set) => ({
     users: [],
     messages: [],
     setMessages: (messages) => set({ messages }),
-    setUsers: (users) => set({ users }),
-    addUser: (user) => set((state) => ({ users: [...state.users, user] })),
+    setUsers: (users) => set((state) => {
+        const existingUsersById = new Map(state.users.map((user) => [user.id, user]));
+        const usersById = new Map<string, User>();
+        users.forEach((user) => {
+            usersById.set(user.id, {
+                ...existingUsersById.get(user.id),
+                ...usersById.get(user.id),
+                ...user,
+            });
+        });
+        return { users: Array.from(usersById.values()) };
+    }),
+    addUser: (user) => set((state) => {
+        const existingUser = state.users.find((existing) => existing.id === user.id);
+        if (existingUser) {
+            return {
+                users: state.users.map((existing) =>
+                    existing.id === user.id ? { ...existing, ...user } : existing
+                ),
+            };
+        }
+        return { users: [...state.users, user] };
+    }),
     removeUser: (socketId) => set((state) => ({ users: state.users.filter(u => u.id !== socketId) })),
     updateUser: (socketId, updates) => set((state) => ({
         users: state.users.map(u => u.id === socketId ? { ...u, ...updates } : u)

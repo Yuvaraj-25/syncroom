@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
  * The video element is ALWAYS mounted — we toggle visibility via CSS
  * instead of unmounting/remounting, which eliminates the flickering.
  */
-function VideoTile({ stream, isLocal, isVideoOn }: { stream: MediaStream | undefined; isLocal?: boolean; isVideoOn?: boolean }) {
+function VideoTile({ stream, isVideoOn }: { stream: MediaStream | undefined; isVideoOn?: boolean }) {
     const videoRef = useRef<HTMLVideoElement>(null);
 
     useEffect(() => {
@@ -53,7 +53,7 @@ function VideoTile({ stream, isLocal, isVideoOn }: { stream: MediaStream | undef
             ref={videoRef}
             autoPlay
             playsInline
-            muted={isLocal}
+            muted
             disablePictureInPicture={true}
             className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${isVideoOn && stream ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         />
@@ -84,7 +84,8 @@ function AudioTile({ stream }: { stream: MediaStream }) {
             }
         };
 
-        attachAudio();
+        const retryAudio = () => { void attachAudio(); };
+        void attachAudio();
 
         const handleVisibilityChange = () => {
             if (document.visibilityState === "visible") attachAudio();
@@ -93,17 +94,24 @@ function AudioTile({ stream }: { stream: MediaStream }) {
 
         document.addEventListener("visibilitychange", handleVisibilityChange);
         window.addEventListener("focus", handleFocus);
-        stream.addEventListener("addtrack", attachAudio);
+        document.addEventListener("pointerdown", retryAudio);
+        document.addEventListener("keydown", retryAudio);
+        stream.addEventListener("addtrack", retryAudio);
+        const audioTracks = stream.getAudioTracks();
+        audioTracks.forEach((track) => track.addEventListener("unmute", retryAudio));
         return () => {
             document.removeEventListener("visibilitychange", handleVisibilityChange);
             window.removeEventListener("focus", handleFocus);
-            stream.removeEventListener("addtrack", attachAudio);
+            document.removeEventListener("pointerdown", retryAudio);
+            document.removeEventListener("keydown", retryAudio);
+            stream.removeEventListener("addtrack", retryAudio);
+            audioTracks.forEach((track) => track.removeEventListener("unmute", retryAudio));
         };
     }, [stream]);
 
     return (
         <>
-            <audio ref={audioRef} autoPlay />
+            <audio ref={audioRef} autoPlay playsInline />
             {needsUserGesture && (
                 <button
                     type="button"
@@ -117,7 +125,7 @@ function AudioTile({ stream }: { stream: MediaStream }) {
                             console.error("Could not start remote audio:", error);
                         }
                     }}
-                    className="absolute inset-x-1 bottom-5 z-20 rounded bg-zinc-950/90 px-1 py-0.5 text-[9px] text-white"
+                    className="absolute inset-x-1 bottom-5 z-20 rounded bg-zinc-950/90 px-2 py-1 text-[10px] font-medium text-white"
                     title="Click to enable this participant's audio"
                 >
                     Enable sound
@@ -145,7 +153,7 @@ export default function CameraGrid({ currentUserId }: { currentUserId: string })
                     >
                         {/* Always-mounted video element — shown/hidden via opacity */}
                         {user.stream && (
-                            <VideoTile stream={user.stream} isLocal={isLocal} isVideoOn={user.isVideoOn} />
+                            <VideoTile stream={user.stream} isVideoOn={user.isVideoOn} />
                         )}
 
                         {/* Avatar fallback — shown when video is off */}

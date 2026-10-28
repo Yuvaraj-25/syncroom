@@ -79,8 +79,8 @@ export default function RoomPage() {
 
     // Start WebRTC connection — pass state refs so recovery restores correct state
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { localStream, toggleScreenShare, ensureAudioTrack, ensureVideoTrack, disableVideoTrack } = useWebRTC(
-        roomId as string, socketId, isMutedRef, isVideoOnRef
+    const { localStream, toggleScreenShare, ensureAudioTrack, ensureVideoTrack, disableVideoTrack, refreshMediaConnections } = useWebRTC(
+        roomId as string, socketId, isMutedRef, isVideoOnRef, socket
     );
 
     const localStreamRef = useRef<MediaStream | null>(null);
@@ -331,6 +331,7 @@ export default function RoomPage() {
     // ── Stabilized toggle handlers (no re-creation on each render) ──────
     const toggleMic = useCallback(async () => {
         const newMuted = !isMutedRef.current;
+        let acquiredTrack = false;
 
         if (newMuted) {
             localStream?.getAudioTracks().forEach(track => { track.enabled = false; });
@@ -338,6 +339,7 @@ export default function RoomPage() {
             let track = localStreamRef.current?.getAudioTracks().find(audioTrack => audioTrack.readyState === "live");
             if (!track) {
                 track = await ensureAudioTrack() ?? undefined;
+                acquiredTrack = Boolean(track);
             }
             if (!track) {
                 toast({
@@ -353,7 +355,8 @@ export default function RoomPage() {
         setIsMuted(newMuted);
         if (socketId) updateUser(socketId, { isMuted: newMuted });
         if (socket) socket.emit("toggle-mic", { roomId, userId: socketId, isMuted: newMuted });
-    }, [localStream, socketId, socket, roomId, updateUser, ensureAudioTrack, toast]);
+        if (acquiredTrack) refreshMediaConnections();
+    }, [localStream, socketId, socket, roomId, updateUser, ensureAudioTrack, toast, refreshMediaConnections]);
 
     const toggleCamera = useCallback(async () => {
         if (isTogglingCamera.current) return;
@@ -398,10 +401,11 @@ export default function RoomPage() {
             setIsVideoOn(newVideoOn);
             if (socketId) updateUser(socketId, { isVideoOn: newVideoOn });
             if (socket) socket.emit("toggle-camera", { roomId, userId: socketId, isVideoOn: newVideoOn });
+            refreshMediaConnections();
         } finally {
             isTogglingCamera.current = false;
         }
-    }, [socketId, socket, roomId, updateUser, ensureVideoTrack, disableVideoTrack, toast]);
+    }, [socketId, socket, roomId, updateUser, ensureVideoTrack, disableVideoTrack, toast, refreshMediaConnections]);
 
     const toggleHand = useCallback(() => {
         setIsHandRaised(prev => {
