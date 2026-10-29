@@ -14,7 +14,7 @@ This guide provides the exact step-by-step instructions to deploy SyncRoom in pr
 | :--- | :--- | :--- | :--- |
 | **Database** | PostgreSQL | Supabase | `db.<REF>.supabase.co:5432` |
 | **Python Service** | FastAPI (Python 3.11) | Render | `https://syncroom-python.onrender.com` |
-| **Backend** | Java 21 / Spring Boot 3 | Render | `https://syncroom-backend.onrender.com` |
+| **Backend** | Java 25 / Spring Boot 4 | Render | `https://syncroom-backend.onrender.com` |
 | **Frontend** | Next.js 14 / React 18 | Vercel | `https://syncroom.vercel.app` |
 
 ---
@@ -128,4 +128,3 @@ This guide provides the exact step-by-step instructions to deploy SyncRoom in pr
 
 ## ✅ You're Done!
 Your watch party platform is now live across Supabase, Render, and Vercel!
-

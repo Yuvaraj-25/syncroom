@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Frontend-Next.js_14-black?style=flat-square&logo=next.js" alt="Next.js" />
-  <img src="https://img.shields.io/badge/Backend-Java_21_+_Spring_Boot_3-orange?style=flat-square&logo=openjdk" alt="Spring Boot" />
+  <img src="https://img.shields.io/badge/Backend-Java_25_+_Spring_Boot_4-orange?style=flat-square&logo=openjdk" alt="Spring Boot" />
   <img src="https://img.shields.io/badge/Database-Supabase_/_PostgreSQL-3ECF8E?style=flat-square&logo=supabase" alt="Supabase" />
   <img src="https://img.shields.io/badge/Real--Time-Spring_WebSocket_+_Socket.IO-blue?style=flat-square&logo=socket.io" alt="Socket.IO" />
   <img src="https://img.shields.io/badge/WebRTC-PeerJS-orange?style=flat-square&logo=webrtc" alt="WebRTC" />
@@ -70,7 +70,7 @@
              │ REST API + Socket.IO   │ WebRTC PeerJS Signaling
              ▼                        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              Backend (Java 21 + Spring Boot 3)                  │
+│              Backend (Java 25 + Spring Boot 4)                  │
 │              Port: 4000                                         │
 │                                                                 │
 │  • Spring MVC REST Controllers (/api/users, /api/rooms, /health)│
@@ -93,7 +93,7 @@
 ## 🚀 Getting Started
 
 ### Prerequisites
-- **Java**: JDK 21+ (`java -version`)
+- **Java**: JDK 25+ (`java -version`)
 - **Maven**: 3.9+ (`mvn -version`)
 - **Node.js**: v18+ (`node -v`)
 - **Python**: 3.10+ (for metadata service)
@@ -228,6 +228,6 @@ docker-compose up --build
 | **WebRTC Signaling** | `peer` npm package (`ExpressPeerServer`) | Spring WebSocket (`PeerJsWebSocketHandler` + `PeerJsHttpController`) |
 | **In-Memory State** | Node `Map` in `socket/index.js` | Thread-safe `RoomStateManager` (`ConcurrentHashMap`) |
 | **AI Assistant** | Node `fetch` to OpenRouter | Spring `RestClient` in `AiAssistantService` |
-| **Build & Dependency** | npm (`package.json`) | Apache Maven (`pom.xml`) with Java 21 |
-| **Containerization** | Node Dockerfile | Multi-stage Eclipse Temurin 21 Dockerfile |
+| **Build & Dependency** | npm (`package.json`) | Apache Maven (`pom.xml`) with Java 25 |
+| **Containerization** | Node Dockerfile | Multi-stage Eclipse Temurin 25 Dockerfile |
 | **CI/CD** | None | GitHub Actions (`.github/workflows/ci.yml`) |
